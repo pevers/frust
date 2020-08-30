@@ -49,12 +49,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Read configuration
     let config_listener = ConfigListener::new(CONFIGURATION_PATH);
+    let config = Configuration::load_from_path(CONFIGURATION_PATH)?;
 
     // Create mutext to share between threads
     let context = Arc::new(Mutex::new(Context {
         inside_temp: 0.0,
         outside_temp: 0.0,
-        config: Configuration::load_from_path(CONFIGURATION_PATH)?,
+        config: config,
     }));
 
     // Compressor
@@ -133,7 +134,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let context = context.clone();
     let lcd = lcd.clone();
-    let mut controller = PIDController::new(1.0, 0.6, 50.0);
+    let mut controller = PIDController::new(config.p, config.i, config.d);
     controller.set_limits(-100.0, 100.0);
     let mut now = Instant::now();
     let mut status_ts = Instant::now();
