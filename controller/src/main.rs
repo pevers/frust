@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Read configuration
     let config_listener = ConfigListener::new(CONFIGURATION_PATH);
-    let config = Configuration::load_from_path(CONFIGURATION_PATH)?;
+    let config = Configuration::load_from_path(CONFIGURATION_PATH).expect("Could not read configuration file");
 
     // Create mutext to share between threads
     let context = Arc::new(Mutex::new(Context {
