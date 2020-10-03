@@ -1,0 +1,13 @@
+[Unit]
+Description=Fridge Server
+After=frust.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/projects/frust/server
+ExecStart=/home/pi/.nvm/versions/node/v14.13.0/bin/node build/server.js
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Alarm Script
+After=frust.service
+
+[Service]
+Type=simple
+ExecStart=/home/pi/projects/frust/alarm.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -31,6 +31,8 @@ const CONFIG_CHANGE: Token = Token(2);
 
 const MINIMUM_IDLE_TIME_MS: f64 = 90000.0;
 const MINIMUM_COOL_TIME_MS: f64 = 2000.0;
+
+// TODO: Make this configurable
 const CONFIGURATION_PATH: &str = "/home/pi/fridge.json";
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -50,7 +52,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Read configuration
     let config_listener = ConfigListener::new(CONFIGURATION_PATH);
     let config = Configuration::load_from_path(CONFIGURATION_PATH).expect("Could not read configuration file");
-
     // Create mutext to share between threads
     let context = Arc::new(Mutex::new(Context {
         inside_temp: 0.0,
