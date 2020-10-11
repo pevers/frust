@@ -1,3 +1,3 @@
-# fridge
+# Server
 
-Fridge hacking fermentation chamber
+NodeJS/Typescript server to monitor fermentation process.
