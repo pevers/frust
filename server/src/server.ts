@@ -3,9 +3,8 @@ import errorHandler from 'errorhandler';
 
 import app from './app';
 import { getLogger } from './logging';
-import { readSettings } from './settings';
-import { getTemperature } from './temperature';
-import Recorder from './recorder';
+import { readContext } from './config';
+import Recorder, { StatusUpdate } from './recorder';
 
 const log = getLogger(module);
 
@@ -15,7 +14,7 @@ const io = require('socket.io')(http, { origins: '*:*' });
 // Initialize the recorder
 const recorder = new Recorder();
 recorder.setupRecorder();
-console.log("Recorder initialized");
+console.log('Recorder initialized');
 
 /**
  * Error Handler. Provides full stack - remove for production
@@ -39,12 +38,17 @@ async function onHealthCheck() {
 
 // Start recording status updatess and emit them to the user
 setInterval(async () => {
-  const settings = readSettings();
-  const temperatures = await getTemperature();
-  const status = {
-    timestamp: (new Date()).toISOString(),
-    ...settings,
-    ...temperatures
+  const context = readContext();
+  const status: StatusUpdate = {
+    timestamp: new Date().toISOString(),
+    inside_temp: context.inside_temp,
+    outside_temp: context.outside_temp,
+    target_temp: context.config.target_temp,
+    correction: context.correction,
+    status: context.status,
+    p: context.config.p,
+    i: context.config.i,
+    d: context.config.d,
   };
   recorder.record(status);
   io.emit('status', status);

@@ -4,7 +4,10 @@ After=frust.service
 
 [Service]
 Type=simple
+Environment="PHONE=your-phone"
 ExecStart=/home/pi/projects/frust/alarm.sh
+User=pi
+Group=pi
 
 [Install]
 WantedBy=multi-user.target

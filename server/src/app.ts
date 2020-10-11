@@ -1,7 +1,7 @@
 import * as bodyParser from 'body-parser';
 import express from 'express';
 import { getRecordedCsv } from './recorder';
-import { updateSettings } from './settings';
+import { updateConfig } from './config';
 
 // Create Express server
 const app = express();
@@ -15,22 +15,21 @@ app.set('port', process.env.PORT || 3000);
 app.use(express.static('public'));
 
 app.post('/temperature', (req: express.Request, res: express.Response) => {
-  const required = ['target_temp', 'p', 'i', 'd'];
-  required.forEach(required => {
-    if (req.body[required] === undefined) {
-      throw new Error(`Required var ${required} not set`);
-    }
-  });
-  
-  const target_temp = Number(req.body.target_temp);
-  const [p,i,d] = [req.body.p, req.body.i, req.body.d];
+  if (
+    !req.headers.authorization ||
+    req.headers.authorization !== `api-key ${process.env.API_KEY}`
+  ) {
+    throw new Error(`Not logged in!`);
+  }
+  const target_temp = req.body.target_temp;
+  const [p, i, d] = [req.body.p, req.body.i, req.body.d];
   const settings = {
     target_temp,
     p,
     i,
-    d
+    d,
   };
-  updateSettings(settings);
+  updateConfig(settings);
   console.log(`Updated settings to ${JSON.stringify(settings)}`);
 
   return res.send('OK');
@@ -47,7 +46,7 @@ app.get('/chart/:day', async (req: express.Request, res: express.Response) => {
   if (!csv) {
     return res.json([]);
   }
-  
+
   const data = csv.split('\n').map(line => {
     const tokens = line.split(',');
     return {
@@ -55,9 +54,10 @@ app.get('/chart/:day', async (req: express.Request, res: express.Response) => {
       status: tokens[1],
       inside_temp: Number(tokens[2]),
       outside_temp: Number(tokens[3]),
-      target_temp: Number(tokens[4])
-    }
-  })
+      target_temp: Number(tokens[4]),
+      correction: Number(tokens[8]),
+    };
+  });
   return res.json(data);
 });
 
