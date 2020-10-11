@@ -1,7 +1,7 @@
 import fs from 'fs';
 
-export const CONTEXT_PATH = '/home/pi/fridge-status.json';
-export const CONFIG_PATH = '/home/pi/fridge.json';
+export const CONTEXT_PATH = '/home/pi/projects/frust/target/debug/fridge-status.json';
+export const CONFIG_PATH = '/home/pi/projects/frust/target/debug/fridge.json';
 
 export type Config = {
   target_temp: number;

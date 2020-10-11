@@ -2,9 +2,11 @@
 
 Fridge controller written in Rust
 
-_controller/_: the Rust controller to maintain fridge temperature.
-_server/_: the Typescript/NodeJS server to plot graphs and record settings and change over time.
-_alarm.sh_: Bash script to monitor fridge temperature.
+**controller/** the Rust controller to maintain fridge temperature.
+
+**server/** the Typescript/NodeJS server to plot graphs and record settings and change over time.
+
+**alarm** Bash script to monitor fridge temperature.
 
 # Services
 

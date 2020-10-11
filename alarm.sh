@@ -1,11 +1,11 @@
 #!/bin/sh
 
 # ALAAAAARM
-MIN_TEMP=6500
-MAX_TEMP=12500
+MIN_TEMP=10000
+MAX_TEMP=13000
 
 N_RESTARTS=$(systemctl show frust.service -p NRestarts | sed -r 's/NRestarts=([0-9]*)/\1/g')
-LAST_SMS=$(date +%s)
+LAST_SMS=0
 
 send_sms() {
   if [ "$LAST_SMS" -lt $(date -d '-5 minutes' +%s) ];
