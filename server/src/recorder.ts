@@ -9,14 +9,15 @@ const LOGS = 'logs/';
 
 export type StatusUpdate = {
   timestamp: string;
-  status: "Idle" | "Cooling";
+  status: 'Idle' | 'Cooling';
   target_temp: number;
   inside_temp: number;
   outside_temp: number;
   p: number;
   i: number;
   d: number;
-}
+  correction: number;
+};
 
 export default class Recorder {
   statusUpdates: StatusUpdate[];
@@ -36,13 +37,13 @@ export default class Recorder {
       const oneWeekAgo = new Date();
       oneWeekAgo.setTime(oneWeekAgo.getTime() - 7 * 24 * 3600_000);
       this.removeFileIfExists(path.join(LOGS, `${oneWeekAgo}.log`));
-    }, 24 * 3600_000)
+    }, 24 * 3600_000);
   }
 
   private removeFileIfExists(path: string) {
     try {
       fs.unlinkSync(path);
-    } catch(e) {
+    } catch (e) {
       log.warn('Could not remove file. Maybe it did not exist');
     }
   }
@@ -51,20 +52,18 @@ export default class Recorder {
     const dateString = this.getDateString(new Date());
     const log = path.join(LOGS, `${dateString}.log`);
     const writeStream = fs.createWriteStream(log, {
-      flags: 'a'
+      flags: 'a',
     });
     writeStream.write(this.toCsvLine(statusUpdate));
     writeStream.close();
   }
 
   private getDateString(date: Date) {
-    return new Date(date.getTime() - (date.getTimezoneOffset() * 60000 ))
-                    .toISOString()
-                    .split("T")[0];
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().split('T')[0];
   }
 
   private toCsvLine(statusUpdate: StatusUpdate) {
-    return `\n${statusUpdate.timestamp},${statusUpdate.status},${statusUpdate.inside_temp},${statusUpdate.outside_temp},${statusUpdate.target_temp},${statusUpdate.p},${statusUpdate.i},${statusUpdate.d}`;
+    return `\n${statusUpdate.timestamp},${statusUpdate.status},${statusUpdate.inside_temp},${statusUpdate.outside_temp},${statusUpdate.target_temp},${statusUpdate.p},${statusUpdate.i},${statusUpdate.d},${statusUpdate.correction}`;
   }
 }
 

@@ -15,7 +15,6 @@ pub enum Status {
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Configuration {
     pub target_temp: f64,
-    pub status: Status,
     pub p: f64,
     pub i: f64,
     pub d: f64,
@@ -40,5 +39,15 @@ impl Configuration {
 pub struct Context {
     pub inside_temp: f64,
     pub outside_temp: f64,
+    pub correction: f64,
+    pub status: Status,
     pub config: Configuration,
+}
+
+impl Context {
+    pub fn write_to_path(self, path: &str) -> Result<(), Box<dyn Error>> {
+        let f = File::create(path)?;
+        serde_json::to_writer(&f, &self)?;
+        Ok(())
+    }
 }

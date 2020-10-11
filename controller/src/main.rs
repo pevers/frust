@@ -30,10 +30,11 @@ const DATA: Token = Token(1);
 const CONFIG_CHANGE: Token = Token(2);
 
 const MINIMUM_IDLE_TIME_MS: f64 = 90000.0;
-const MINIMUM_COOL_TIME_MS: f64 = 2000.0;
+const MINIMUM_COOL_TIME_MS: f64 = 20000.0;
 
 // TODO: Make this configurable
 const CONFIGURATION_PATH: &str = "/home/pi/fridge.json";
+const CONTEXT_PATH: &str = "/home/pi/fridge-status.json";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let outside_sensor_path = match env::var("OUTSIDE_SENSOR") {
@@ -56,6 +57,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let context = Arc::new(Mutex::new(Context {
         inside_temp: 0.0,
         outside_temp: 0.0,
+        correction: 0.0,
+        status: Status::Idle,
         config: config,
     }));
 
@@ -156,16 +159,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         let delta = now.elapsed();
         now = Instant::now();
         let correction = controller.update(inside_temp, delta.as_secs() as f64);
+        context.correction = correction;
         let compressor_state = compressor.get_value()?;
         let time_elapsed = status_ts.elapsed().as_millis() as f64;
+        
         if correction > 0.0 {
             // Shutdown compressor if it has been on for the minimum amount of time
             if compressor_state != 0 && time_elapsed > MINIMUM_COOL_TIME_MS {
                 println!("Disabling compressor");
                 compressor.set_value(0)?;
                 status_ts = Instant::now();
-                context.config.status = Status::Idle;
-                context.config.write_to_path(CONFIGURATION_PATH).expect("Could not write configuration file");
+                context.status = Status::Idle;
             }
         } else {
             // Enable compressor if it has been idle for the minimum amount of time
@@ -173,10 +177,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 println!("Enabling compressor");
                 compressor.set_value(1)?;
                 status_ts = Instant::now();
-                context.config.status = Status::Cooling;
-                context.config.write_to_path(CONFIGURATION_PATH).expect("Could not write configuration file");
+                context.status = Status::Cooling;
             }
         }
+        context.write_to_path(CONTEXT_PATH).expect("Could not write context file");
 
         println!("Current temperature {}", inside_temp);
         println!("Target {}", context.config.target_temp);
@@ -186,7 +190,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut lcd = lcd.lock().unwrap();
         lcd.update(*context);
 
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(1000));
     }
 }
 
