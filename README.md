@@ -1,6 +1,8 @@
 # frust
 
-Fridge controller written in Rust
+Fridge controller written in Rust.
+
+![image](./screenshot.png)
 
 **controller/** the Rust controller to maintain fridge temperature.
 
