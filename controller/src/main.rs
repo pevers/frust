@@ -58,6 +58,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Compressor
     let compressor = sysfs_gpio::Pin::new(23);
+    compressor.export().expect("Could not export pin 23");
     compressor.set_direction(Direction::Out).expect("Could not set direction for GPIO pin 23");
     compressor.set_value(0).expect("Could not enable compressor");
 
@@ -66,15 +67,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Clock pin
     let clock = sysfs_gpio::Pin::new(27);
+    clock.export().expect("Could not export pin 27");
     clock.set_direction(Direction::In).expect("Could not set direction for GPIO pin 27");
     clock.set_edge(Edge::BothEdges).expect("Could not set edge for GPIO pin 27");
-    let clock_events = clock.get_async_poller().unwrap();
+    let clock_events = clock.get_async_poller()?;
 
     // Data pin
     let data = sysfs_gpio::Pin::new(22);
+    data.export().expect("Could not export pin 22");
     data.set_direction(Direction::In).expect("Could not set direction for GPIO pin 22");
     data.set_edge(Edge::BothEdges).expect("Could not set edge for GPIO pin 22");
-    let data_events = data.get_async_poller().unwrap();
+    let data_events = data.get_async_poller()?;
 
     // Setup event registry
     let poll = Poll::new()?;
@@ -91,7 +94,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     // Ditch first OS event
-    poll.poll(&mut events, None).unwrap();
+    poll.poll(&mut events, None)?;
 
     // Asynchronously start listening to events
     {
@@ -101,7 +104,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             loop {
                 // Wait for events
                 poll.poll(&mut events, None).unwrap();
-                let mut context = context.lock().unwrap();
+                let mut context = context.unwrap();
                 let mut lcd = lcd.lock().unwrap();
                 for event in &events {
                     match event.token() {
@@ -154,7 +157,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Get temperature and store in the context
         let outside_temp = read_temperature(&outside_sensor_path);
         let inside_temp = read_temperature(&inside_sensor_path);
-        let mut context = context.lock().unwrap();
+        let mut context = context.lock()?;
         context.outside_temp = outside_temp;
         context.inside_temp = inside_temp;
 
@@ -188,7 +191,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let target_duty_cycle = correction / -100.0;
         let current_duty_cycle = compressor_on / DUTY_CYCLE_S;
 
-        println!("🍺----------------------------");
+        println!("🍺---------------------------🍺");
         println!("compressor_on {}", compressor_on);
         println!("compressor_off {}", compressor_off);
         println!("current_duty_cycle {}", current_duty_cycle);
@@ -196,7 +199,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("inside_temp {}", inside_temp);
         println!("target_temp {}", context.config.target_temp);
         println!("correction {}", correction);
-        println!("-----------------------------🍺");
+        println!("🍺----------------------------🍺");
 
         if current_duty_cycle < target_duty_cycle {
             // Enable compressor if it has been idle for the minimum amount of time
@@ -228,13 +231,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             .expect("Could not write context file");
 
         // Print it to the LCD
-        let mut lcd = lcd.lock().unwrap();
+        let mut lcd = lcd.lock()?;
         lcd.update(*context);
 
         thread::sleep(Duration::from_millis(1000));
     }
 }
 
+// TODO: Refactor to return Result<f64, dyn<Error>>
 fn read_temperature(path: &str) -> f64 {
     let contents =
         fs::read_to_string(path).expect(&format!("Cannot read temperature probe {}", path));
