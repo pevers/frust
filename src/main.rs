@@ -3,13 +3,17 @@ use actix_files::NamedFile;
 use actix_web::{get, post, web, App, Error, HttpRequest, HttpResponse, HttpServer, Result};
 use actix_web_actors::ws;
 use log::info;
+use pid::Pid;
+use probes::read_temperature;
 use serde::{Deserialize, Serialize};
 use std::{
+    env,
     path::Path,
     sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
+mod probes;
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 struct Config {
@@ -59,6 +63,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for FridgeStatusActor
 
 struct AppState {
     config: Arc<Mutex<Config>>,
+    pid: Arc<Mutex<Pid<f64>>>,
     listeners: Arc<Mutex<Vec<Addr<FridgeStatusActor>>>>,
 }
 
@@ -70,12 +75,17 @@ async fn index() -> Result<NamedFile> {
 
 // Update the configuration of the controller
 #[post("/api/config")]
-async fn update_config(data: web::Data<AppState>) -> Result<HttpResponse> {
-    // TODO: update configuration and return it
-    let mut config = data.config.lock().unwrap();
-    config.p = 5.0; // TEST, should be payload
-    info!("Configuration {:?}", config);
-    Ok(HttpResponse::Ok().json(*config))
+async fn update_config(
+    data: web::Data<AppState>,
+    config_update: web::Json<Config>,
+) -> Result<HttpResponse> {
+    let mut pid = data.pid.lock().unwrap();
+    pid.kp = config_update.p;
+    pid.ki = config_update.i;
+    pid.kd = config_update.d;
+    pid.reset_integral_term();
+    info!("Configuration updated {:?}", config_update);
+    Ok(HttpResponse::Ok().json(*config_update))
 }
 
 // Upgrades connection to a Websocket and registers a listener
@@ -87,9 +97,9 @@ async fn status_update(
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, Error> {
     let (actor, resp) = ws::start_with_addr(FridgeStatusActor {}, &req, stream)?;
-    info!("Actor connected");
     let mut listeners = data.listeners.lock().unwrap();
     listeners.push(actor);
+    info!("Actor connected");
     Ok(resp)
 }
 
@@ -97,13 +107,30 @@ async fn status_update(
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
+    // Temperature probes
+    let outside_sensor_path = env::var("OUTSIDE_SENSOR").expect("OUTSIDE_SENSOR path not set");
+    let inside_sensor_path = env::var("INSIDE_SENSOR").expect("INSIDE_SENSOR path not set");
+
     // Configuration, will be read from file and stored in a file
-    let config = Arc::new(Mutex::new(Config {
+    // TODO: Read from file
+    let config = Config {
         target_temp: 4.0,
         p: 1.0,
         i: 0.0,
         d: 0.0,
-    }));
+    };
+    let pid = Pid::new(
+        config.p,
+        config.i,
+        config.d,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        config.target_temp,
+    );
+    let config = Arc::new(Mutex::new(config));
+    let pid = Arc::new(Mutex::new(pid));
 
     // Current status, will be updated by the control loop
     let mut status = FridgeStatus {
@@ -119,12 +146,17 @@ async fn main() -> std::io::Result<()> {
     let control_listeners = listeners.clone();
     thread::spawn(move || {
         loop {
-            // Scoped block to quickly update configuration and release the lock
+            status.outside_temp =
+                read_temperature(&outside_sensor_path).expect("Could not read outside temperature");
+            status.inside_temp =
+                read_temperature(&inside_sensor_path).expect("Could not read inside temperature");
 
-            // TODO: Read control config and apply PID controller results
             // TODO: Read temperature probes
+            // TODO: Monitoring? Or just stick to the Bash script
+            // Scoped block to quickly update configuration and release the lock
             {
                 let mut control_config = control_config.lock().unwrap();
+
                 control_config.p += 1.0;
                 info!("Control loop {:?}", control_config);
             }
@@ -140,6 +172,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         let state = web::Data::new(AppState {
             config: config.clone(),
+            pid: pid.clone(),
             listeners: listeners.clone(),
         });
         App::new()
