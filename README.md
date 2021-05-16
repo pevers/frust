@@ -19,3 +19,7 @@ sudo systemctl start frust          # Start the controller
 sudo systemctl start frust-server   # Start the server
 sudo systemctl start alarm          # Start the monitor
 ```
+
+## TODO
+- [ ] Disable heater with environment variable
+- [ ] 

@@ -1,7 +1,10 @@
 use actix::{Actor, Addr, Handler, Message, StreamHandler};
 use actix_files::NamedFile;
-use actix_web::{get, post, web, App, Error, HttpRequest, HttpResponse, HttpServer, Result};
+use actix_web::{get, post, web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
+use anyhow::{Context, Result};
+use core::f64;
+use gpio::{Direction, Pin};
 use log::info;
 use pid::Pid;
 use probes::read_temperature;
@@ -11,9 +14,20 @@ use std::{
     path::Path,
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
+
+mod gpio;
 mod probes;
+
+// Minimum of 90 s before turning the compressor on again
+const MINIMUM_IDLE_TIME_MS: f64 = 90000.0;
+
+// Minimum of 15 s of cooling before turning it off
+const MINIMUM_COOL_TIME_MS: f64 = 15000.0;
+
+// Duty cycle time in ms
+const DUTY_CYCLE_MS: f64 = 300000.0;
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 struct Config {
@@ -24,10 +38,27 @@ struct Config {
 }
 
 #[derive(Debug, Copy, Clone, Serialize)]
+enum Mode {
+    Idle,
+    Cooling,
+    Heating,
+}
+
+#[derive(Debug, Copy, Clone, Serialize)]
+enum Status {
+    On,
+    Off,
+}
+
+#[derive(Debug, Copy, Clone, Serialize)]
 struct FridgeStatus {
     pub inside_temp: f64,
     pub outside_temp: f64,
     pub correction: f64,
+    pub mode: Mode,             // Current mode, switching takes time
+    pub status: Status,         // Current status inside the mode
+    pub duty_cycle: f64,        // Current duty cycle (ms on / total duty cycle)
+    pub target_duty_cycle: f64, // Target duty cycle (ms on)
 }
 
 #[derive(Message, Serialize)]
@@ -69,7 +100,7 @@ struct AppState {
 
 // Display the UI
 #[get("/")]
-async fn index() -> Result<NamedFile> {
+async fn index() -> actix_web::Result<NamedFile> {
     Ok(NamedFile::open(Path::new("static/index.html"))?)
 }
 
@@ -78,7 +109,7 @@ async fn index() -> Result<NamedFile> {
 async fn update_config(
     data: web::Data<AppState>,
     config_update: web::Json<Config>,
-) -> Result<HttpResponse> {
+) -> actix_web::Result<HttpResponse> {
     let mut pid = data.pid.lock().unwrap();
     pid.kp = config_update.p;
     pid.ki = config_update.i;
@@ -95,7 +126,7 @@ async fn status_update(
     req: HttpRequest,
     stream: web::Payload,
     data: web::Data<AppState>,
-) -> Result<HttpResponse, Error> {
+) -> actix_web::Result<HttpResponse, Error> {
     let (actor, resp) = ws::start_with_addr(FridgeStatusActor {}, &req, stream)?;
     let mut listeners = data.listeners.lock().unwrap();
     listeners.push(actor);
@@ -104,12 +135,21 @@ async fn status_update(
 }
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> anyhow::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     // Temperature probes
     let outside_sensor_path = env::var("OUTSIDE_SENSOR").expect("OUTSIDE_SENSOR path not set");
     let inside_sensor_path = env::var("INSIDE_SENSOR").expect("INSIDE_SENSOR path not set");
+
+    // Set compressor and heater GPIO pins
+    let compressor = Pin::new(23)
+        .export()
+        .context("could not export compressor pin")?
+        .set_direction(Direction::Out)?
+        .set_value(0)?;
+
+    // TODO: Find out the heater GPIO pin
 
     // Configuration, will be read from file and stored in a file
     // TODO: Read from file
@@ -134,32 +174,89 @@ async fn main() -> std::io::Result<()> {
 
     // Current status, will be updated by the control loop
     let mut status = FridgeStatus {
-        inside_temp: 0.0,
-        outside_temp: 0.0,
+        inside_temp: 10.0,
+        outside_temp: 10.0,
         correction: 0.0,
+        status: Status::Off,
+        mode: Mode::Idle,
+        duty_cycle: 0.0,
+        target_duty_cycle: 0.0,
     };
 
     // All listeners for fridge status updates
     let listeners: Arc<Mutex<Vec<Addr<FridgeStatusActor>>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let control_config = config.clone();
+    let control_pid = pid.clone();
     let control_listeners = listeners.clone();
+    let mut now = Instant::now();
     thread::spawn(move || {
         loop {
+            let delta_ms: f64 = now.elapsed().as_millis() as f64;
+            now = Instant::now();
             status.outside_temp =
                 read_temperature(&outside_sensor_path).expect("Could not read outside temperature");
             status.inside_temp =
                 read_temperature(&inside_sensor_path).expect("Could not read inside temperature");
 
-            // TODO: Read temperature probes
             // TODO: Monitoring? Or just stick to the Bash script
             // Scoped block to quickly update configuration and release the lock
             {
-                let mut control_config = control_config.lock().unwrap();
-
-                control_config.p += 1.0;
-                info!("Control loop {:?}", control_config);
+                let mut control_pid = control_pid.lock().unwrap();
+                let correction = control_pid.next_control_output(status.inside_temp);
+                status.correction = correction.output;
             }
+            status.target_duty_cycle = (status.correction / 100.0).abs();
+
+            // Update duty cycle
+            match status.mode {
+                Mode::Idle => {
+                    // Update duty cycle
+                    status.duty_cycle = DUTY_CYCLE_MS.max(status.duty_cycle - delta_ms);
+
+                    // The 3 options are
+                    // Idle -> Idle
+                    // Idle -> Cooling
+                    // Idle -> Heating
+
+                    if status.duty_cycle < status.target_duty_cycle {
+                        // Status needs to change
+                        // TODO: Check if we meed the deadlines
+                        if status.correction < 0.0 {
+                            status.mode = Mode::Cooling;
+                        }
+                        if status.correction > 0.0 {
+                            status.mode = Mode::Heating;
+                        }
+                    }
+                }
+                Mode::Cooling => {
+                    // Update duty cycle
+                    status.duty_cycle = DUTY_CYCLE_MS.min(status.duty_cycle + delta_ms);
+
+                    // The 2 options are
+                    // Cooling -> Idle
+                    // Cooling -> Cooling
+
+                    // TODO: Check if we have been ON for long enough
+                    if status.duty_cycle > status.target_duty_cycle {
+                        status.mode = Mode::Idle;
+                    }
+                }
+                Mode::Heating => {
+                    status.duty_cycle = DUTY_CYCLE_MS.min(status.duty_cycle + delta_ms);
+
+                    // The 2 options are
+                    // Heating -> Idle
+                    // Heating -> Heating
+
+                    // TODO: Check if we have been ON for long enough
+                    if status.duty_cycle > status.target_duty_cycle {
+                        status.mode = Mode::Idle;
+                    }
+                }
+            };
+
+            info!("Status {:?}", status);
 
             // Send status updates to all listeners
             for listener in control_listeners.lock().unwrap().iter() {
@@ -183,5 +280,7 @@ async fn main() -> std::io::Result<()> {
     })
     .bind("127.0.0.1:8080")?
     .run()
-    .await
+    .await?;
+
+    Ok(())
 }
