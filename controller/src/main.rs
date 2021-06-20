@@ -38,6 +38,13 @@ const MIN_DUTY_CYCLE_S: f64 = 0.0;
 const CONFIGURATION_PATH: &str = "/etc/fridge.json";
 const CONTEXT_PATH: &str = "/var/log/fridge-status.json";
 
+// TODO: 1. Log data with Rust
+// TODO: 2. Settings in dedicated file, only listen to this file for changes
+// TODO: 3. Test export
+// TODO: 4. non-root? move configuration file to application folder
+// TODO: 5. Error log to dedicated file
+
+
 fn main() -> Result<(), Box<dyn Error>> {
     let outside_sensor_path = env::var("OUTSIDE_SENSOR").expect("OUTSIDE_SENSOR path not set");
     let inside_sensor_path = env::var("INSIDE_SENSOR").expect("INSIDE_SENSOR path not set");
@@ -130,7 +137,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 }
                                 _ => {}
                             }
-                        }
+                        },
                         CONFIG_CHANGE => {
                             println!("Configuration change, reloading!");
                             let config = Configuration::load_from_path(CONFIGURATION_PATH)
@@ -155,8 +162,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         let lcd = lcd.clone();
 
         // Get temperature and store in the context
-        let outside_temp = read_temperature(&outside_sensor_path);
-        let inside_temp = read_temperature(&inside_sensor_path);
+        let outside_temp = read_temperature(&outside_sensor_path)?;
+        let inside_temp = read_temperature(&inside_sensor_path)?;
         let mut context = context.lock()?;
         context.outside_temp = outside_temp;
         context.inside_temp = inside_temp;
@@ -238,12 +245,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-// TODO: Refactor to return Result<f64, dyn<Error>>
-fn read_temperature(path: &str) -> f64 {
-    let contents =
-        fs::read_to_string(path).expect(&format!("Cannot read temperature probe {}", path));
-    let re = Regex::new(r"(?m)t=([0-9]+)$").unwrap();
-    let caps = re.captures(&contents).unwrap();
-
-    caps.get(1).unwrap().as_str().parse::<f64>().unwrap() / 1000.0
+fn read_temperature(path: &str) -> Result<f64, Box<dyn Error>> {
+    let contents = fs::read_to_string(path)?;
+    let re = Regex::new(r"(?m)t=([0-9]+)$")?;
+    let caps = re.captures(&contents).ok_or("Temperature reading not found")?;
+    let cap = caps.get(1).ok_or("Cannot parse temperature")?;
+    let temp: f64 = cap.as_str().parse()?;
+    Ok(temp / 1000.0)
 }

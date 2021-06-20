@@ -22,61 +22,61 @@
       crossorigin="anonymous"
     ></script>
     <script>
-      const socket = io('http://raspberrypi.home:3000');
+      const socket = io("ws://raspberrypi");
       let lastUpdate = null;
       let chart = null; // Used to update the chart for new temperature readings
       let controllerChart = null;
       let outsideChart = null;
 
-      const getStatusSymbol = status => {
-        if (status === 'Cooling') {
-          return '❄️';
+      const getStatusSymbol = (status) => {
+        if (status === "Cooling") {
+          return "❄️";
         }
-        return '💤';
+        return "💤";
       };
 
-      socket.on('status', data => {
-        console.log('Received status', data);
-        $('.inside-temp').html(data.inside_temp.toPrecision(4) + '°C');
-        $('.outside-temp').html(data.outside_temp.toPrecision(4) + '°C');
-        $('.status').html(getStatusSymbol(data.status));
-        $('.last-updated').html(new Date().toLocaleTimeString());
-        $('.target-temp-status').html(data.target_temp);
-        $('.p-status').html(data.p);
-        $('.i-status').html(data.i);
-        $('.d-status').html(data.d);
+      socket.on("status", (data) => {
+        console.log("Received status", data);
+        $(".inside-temp").html(data.inside_temp.toPrecision(4) + "°C");
+        $(".outside-temp").html(data.outside_temp.toPrecision(4) + "°C");
+        $(".status").html(getStatusSymbol(data.status));
+        $(".last-updated").html(new Date().toLocaleTimeString());
+        $(".target-temp-status").html(data.target_temp);
+        $(".p-status").html(data.p);
+        $(".i-status").html(data.i);
+        $(".d-status").html(data.d);
 
         // If this is the first status update, also update the input boxes
         if (!lastUpdate) {
-          $('.target-temp-input').val(data.target_temp);
-          $('.p-input').val(data.p);
-          $('.i-input').val(data.i);
-          $('.d-input').val(data.d);
+          $(".target-temp-input").val(data.target_temp);
+          $(".p-input").val(data.p);
+          $(".i-input").val(data.i);
+          $(".d-input").val(data.d);
           lastUpdate = data;
         }
         updateChart(data);
       });
 
       function setTemperature(settings) {
-        console.log('setting temperature', settings);
-        $.ajax('/temperature', {
-          method: 'POST',
+        console.log("setting temperature", settings);
+        $.ajax("/temperature", {
+          method: "POST",
           data: settings,
           headers: {
-            Authorization: `api-key ${$('.api-key').val()}`,
+            Authorization: `api-key ${$(".api-key").val()}`,
           },
         }).then(
-          data => {
-            $('.update-notice').show();
-            $('.update-notice').fadeOut(5000);
-            console.log('Response from server', data);
+          (data) => {
+            $(".update-notice").show();
+            $(".update-notice").fadeOut(5000);
+            console.log("Response from server", data);
             s;
           },
-          error => {
-            $('.update-notice').show();
-            $('.update-notice').html('Error updating configuration');
-            $('.update-notice').fadeOut(5000);
-            console.error('Error setting temperature', error);
+          (error) => {
+            $(".update-notice").show();
+            $(".update-notice").html("Error updating configuration");
+            $(".update-notice").fadeOut(5000);
+            console.error("Error setting temperature", error);
           }
         );
       }
@@ -92,8 +92,8 @@
         let controller = [];
         let outside = [];
         temperatures
-          .filter(temp => new Date(temp.timestamp) > after)
-          .forEach(temp => {
+          .filter((temp) => new Date(temp.timestamp) > after)
+          .forEach((temp) => {
             inside.push({
               x: new Date(temp.timestamp),
               y: temp.inside_temp,
@@ -113,7 +113,7 @@
       function getDateString(date) {
         return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
           .toISOString()
-          .split('T')[0];
+          .split("T")[0];
       }
 
       function updateChart(status) {
@@ -141,16 +141,20 @@
       }
 
       async function loadChart() {
-        const [insideTemperature, controllerReadings, outsideTemperature] = await getTempReadings();
-        const ctx = $('#temp-chart');
+        const [
+          insideTemperature,
+          controllerReadings,
+          outsideTemperature,
+        ] = await getTempReadings();
+        const ctx = $("#temp-chart");
         chart = new Chart(ctx, {
-          type: 'line',
+          type: "line",
           data: {
             datasets: [
               {
-                label: 'Inside Temp',
+                label: "Inside Temp",
                 data: insideTemperature,
-                borderColor: '#3e95cd',
+                borderColor: "#3e95cd",
                 fill: false,
               },
             ],
@@ -160,26 +164,26 @@
             scales: {
               xAxes: [
                 {
-                  type: 'time',
+                  type: "time",
                   time: {
-                    tooltipFormat: 'll',
+                    tooltipFormat: "ll",
                   },
-                  distribution: 'linear',
+                  distribution: "linear",
                 },
               ],
             },
           },
         });
 
-        const controllerCtx = $('#controller-chart');
+        const controllerCtx = $("#controller-chart");
         controllerChart = new Chart(controllerCtx, {
-          type: 'line',
+          type: "line",
           data: {
             datasets: [
               {
-                label: 'Controller Correction',
+                label: "Controller Correction",
                 data: controllerReadings,
-                borderColor: '#FF0000',
+                borderColor: "#FF0000",
                 fill: false,
               },
             ],
@@ -189,26 +193,26 @@
             scales: {
               xAxes: [
                 {
-                  type: 'time',
+                  type: "time",
                   time: {
-                    tooltipFormat: 'll',
+                    tooltipFormat: "ll",
                   },
-                  distribution: 'linear',
+                  distribution: "linear",
                 },
               ],
             },
           },
         });
 
-        const outsideCtx = $('#outside-temp-chart');
+        const outsideCtx = $("#outside-temp-chart");
         outsideChart = new Chart(outsideCtx, {
-          type: 'line',
+          type: "line",
           data: {
             datasets: [
               {
-                label: 'Outside Temp',
+                label: "Outside Temp",
                 data: outsideTemperature,
-                borderColor: '#00FF00',
+                borderColor: "#00FF00",
                 fill: false,
               },
             ],
@@ -218,11 +222,11 @@
             scales: {
               xAxes: [
                 {
-                  type: 'time',
+                  type: "time",
                   time: {
-                    tooltipFormat: 'll',
+                    tooltipFormat: "ll",
                   },
-                  distribution: 'linear',
+                  distribution: "linear",
                 },
               ],
             },
@@ -234,27 +238,32 @@
       $(document).ready(() => {
         function debounce(fn, ms) {
           let timer = 0;
-          return function(...args) {
+          return function (...args) {
             clearTimeout(timer);
             timer = setTimeout(fn.bind(this, ...args), ms || 0);
           };
         }
 
-        $('.target-temp-set, .p-set, .i-set, .d-set').on(
-          'click',
-          debounce(event => {
+        $(".target-temp-set, .p-set, .i-set, .d-set").on(
+          "click",
+          debounce((event) => {
             // Hacky way to convert input fields to API parameters
-            const type = event.target.className.split('-set')[0];
+            const type = event.target.className.split("-set")[0];
             const settings = {};
-            settings[type.replace('-', '_')] = Number($(`.${type}-input`).val());
+            settings[type.replace("-", "_")] = Number(
+              $(`.${type}-input`).val()
+            );
             setTemperature(settings);
           }, 500)
         );
 
-        $('.api-key').val(window.localStorage.getItem('apiKey'));
-        $('.api-key').on(
-          'input',
-          debounce(() => window.localStorage.setItem('apiKey', $('.api-key').val()), 500)
+        $(".api-key").val(window.localStorage.getItem("apiKey"));
+        $(".api-key").on(
+          "input",
+          debounce(
+            () => window.localStorage.setItem("apiKey", $(".api-key").val()),
+            500
+          )
         );
         loadChart();
       });
@@ -262,9 +271,9 @@
     <style>
       html,
       body {
-        font-family: Sentinel SSm A, Sentinel SSm B, system-ui, -apple-system, BlinkMacSystemFont,
-          Segoe UI, Roboto, Helvetica, Arial, sans-serif, Apple Color Emoji, Segoe UI Emoji,
-          Segoe UI Symbol;
+        font-family: Sentinel SSm A, Sentinel SSm B, system-ui, -apple-system,
+          BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif,
+          Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol;
         font-size: 1.2rem;
         font-weight: 400;
         line-height: 1.7;
@@ -330,9 +339,7 @@
           <form novalidate>
             <div class="settings-row">
               <div>
-                <label for="outside-temp">
-                  Outside temperature
-                </label>
+                <label for="outside-temp"> Outside temperature </label>
               </div>
               <div>
                 <p class="outside-temp"></p>
@@ -340,9 +347,7 @@
             </div>
             <div class="settings-row">
               <div>
-                <label for="target-temp">
-                  T
-                </label>
+                <label for="target-temp"> T </label>
               </div>
               <div>
                 <p class="target-temp-status"></p>
@@ -360,51 +365,61 @@
             </div>
             <div class="settings-row">
               <div>
-                <label for="p">
-                  Kp
-                </label>
+                <label for="p"> Kp </label>
               </div>
               <div>
                 <p class="p-status"></p>
               </div>
               <div>
-                <input name="p" class="p-input" size="5" type="number" step="0.01" />
+                <input
+                  name="p"
+                  class="p-input"
+                  size="5"
+                  type="number"
+                  step="0.01"
+                />
                 <input type="button" class="p-set" value="SET" />
               </div>
             </div>
             <div class="settings-row">
               <div>
-                <label for="i">
-                  Ki
-                </label>
+                <label for="i"> Ki </label>
               </div>
               <div>
                 <p class="i-status"></p>
               </div>
               <div>
-                <input name="i" class="i-input" size="5" type="number" step="0.001" />
+                <input
+                  name="i"
+                  class="i-input"
+                  size="5"
+                  type="number"
+                  step="0.001"
+                />
                 <input type="button" class="i-set" value="SET" />
               </div>
             </div>
             <div class="settings-row">
               <div>
-                <label for="d">
-                  Kd
-                </label>
+                <label for="d"> Kd </label>
               </div>
               <div>
                 <p class="d-status"></p>
               </div>
               <div>
-                <input name="d" class="d-input" size="5" type="number" step="0.001" />
+                <input
+                  name="d"
+                  class="d-input"
+                  size="5"
+                  type="number"
+                  step="0.001"
+                />
                 <input type="button" class="d-set" value="SET" />
               </div>
             </div>
             <div class="settings-row">
               <div>
-                <label for="api-key">
-                  api-key
-                </label>
+                <label for="api-key"> api-key </label>
               </div>
               <div>
                 <input name="api-key" class="api-key" type="password" />

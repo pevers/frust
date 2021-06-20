@@ -148,7 +148,11 @@ async fn main() -> anyhow::Result<()> {
         .context("could not export compressor pin")?
         .set_direction(Direction::Out)?
         .set_value(0)?;
-
+    let heater = Pin::new(24)
+        .export()
+        .context("could not export heater pin")?
+        .set_direction(Direction::Out)?
+        .set_value(0)?;
     // TODO: Find out the heater GPIO pin
 
     // Configuration, will be read from file and stored in a file
@@ -278,7 +282,7 @@ async fn main() -> anyhow::Result<()> {
             .service(update_config)
             .service(status_update)
     })
-    .bind("127.0.0.1:8080")?
+    .bind("0.0.0.0:8080")?
     .run()
     .await?;
 
