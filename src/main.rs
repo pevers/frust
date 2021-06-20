@@ -3,6 +3,7 @@ use actix_files::NamedFile;
 use actix_web::{get, post, web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
 use anyhow::{Context, Result};
+use logs::FridgeStatusLog;
 use core::f64;
 use gpio::{Direction, Pin};
 use log::info;
@@ -17,8 +18,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::logs::{read_logs, write_log};
+
 mod gpio;
 mod probes;
+mod logs;
 
 // Minimum of 90 s before turning the compressor on again
 const MINIMUM_IDLE_TIME_MS: f64 = 90000.0;
@@ -37,26 +41,19 @@ struct Config {
     pub d: f64,
 }
 
-#[derive(Debug, Copy, Clone, Serialize)]
-enum Mode {
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub enum Mode {
     Idle,
     Cooling,
     Heating,
 }
 
-#[derive(Debug, Copy, Clone, Serialize)]
-enum Status {
-    On,
-    Off,
-}
-
-#[derive(Debug, Copy, Clone, Serialize)]
-struct FridgeStatus {
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct FridgeStatus {
     pub inside_temp: f64,
     pub outside_temp: f64,
     pub correction: f64,
     pub mode: Mode,             // Current mode, switching takes time
-    pub status: Status,         // Current status inside the mode
     pub duty_cycle: f64,        // Current duty cycle (ms on / total duty cycle)
     pub target_duty_cycle: f64, // Target duty cycle (ms on)
 }
@@ -93,7 +90,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for FridgeStatusActor
 }
 
 struct AppState {
-    config: Arc<Mutex<Config>>,
+    config: Arc<Mutex<Config>>, // TODO: Can probably be removed
     pid: Arc<Mutex<Pid<f64>>>,
     listeners: Arc<Mutex<Vec<Addr<FridgeStatusActor>>>>,
 }
@@ -132,6 +129,13 @@ async fn status_update(
     listeners.push(actor);
     info!("Actor connected");
     Ok(resp)
+}
+
+// Get the log for a certain date and hour
+#[get("/api/logs/{date}/{hour}")]
+async fn get_log(web::Path((date, hour)): web::Path<(String, String)>) -> actix_web::Result<HttpResponse> {
+    let logs = read_logs(&date, &hour).expect("could not read logs");
+    Ok(HttpResponse::Ok().json(logs))
 }
 
 #[actix_web::main]
@@ -181,7 +185,6 @@ async fn main() -> anyhow::Result<()> {
         inside_temp: 10.0,
         outside_temp: 10.0,
         correction: 0.0,
-        status: Status::Off,
         mode: Mode::Idle,
         duty_cycle: 0.0,
         target_duty_cycle: 0.0,
@@ -260,7 +263,8 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            info!("Status {:?}", status);
+            info!("🍺 {:?} 🍺", status);
+            write_log(status).expect("could not write log");
 
             // Send status updates to all listeners
             for listener in control_listeners.lock().unwrap().iter() {
