@@ -1,14 +1,15 @@
 use actix::{Actor, Addr, Handler, Message, StreamHandler};
 use actix_files::NamedFile;
-use actix_web::{get, post, web, App, Error, HttpRequest, HttpResponse, HttpServer};
+use actix_web::{error, get, post, web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
 use anyhow::{Context, Result};
 use core::f64;
 use gpio::{Direction, Pin};
+use lazy_static::lazy_static;
 use log::info;
-use logs::FridgeStatusLog;
 use pid::Pid;
 use probes::read_temperature;
+use prometheus::{opts, register_gauge, Encoder, Gauge, TextEncoder};
 use serde::{Deserialize, Serialize};
 use std::{
     env,
@@ -18,10 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::logs::{read_logs, write_log};
-
 mod gpio;
-mod logs;
 mod probes;
 
 // Minimum of 90 s before turning the compressor on again
@@ -35,6 +33,18 @@ const DUTY_CYCLE_MS: f64 = 300000.0;
 
 const MIN_DUTY_CYCLE_MS: f64 = 0.0;
 
+lazy_static! {
+    static ref INSIDE_TEMP_CELCIUS: Gauge = register_gauge!(opts!(
+        "inside_temp_celcius",
+        "Inside temperature of the fridge in Celcius"
+    ))
+    .unwrap();
+    static ref OUTSIDE_TEMP_CELCIUS: Gauge = register_gauge!(opts!(
+        "outside_temp_celcius",
+        "Outside temperature of the room in Celcius"
+    ))
+    .unwrap();
+}
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 struct Config {
     pub target_temp: f64,
@@ -136,13 +146,17 @@ async fn status_update(
     Ok(resp)
 }
 
-// Get the log for a certain date and hour
-#[get("/api/logs/{date}/{hour}")]
-async fn get_log(
-    web::Path((date, hour)): web::Path<(String, String)>,
-) -> actix_web::Result<HttpResponse> {
-    let logs = read_logs(&date, &hour).expect("could not read logs");
-    Ok(HttpResponse::Ok().json(logs))
+#[get("/metrics")]
+async fn get_metrics() -> actix_web::Result<HttpResponse> {
+    let mut buffer = Vec::new();
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    encoder
+        .encode(&metric_families, &mut buffer)
+        .map_err(|e| error::ErrorInternalServerError(e))?;
+    let output =
+        String::from_utf8(buffer.clone()).map_err(|e| error::ErrorInternalServerError(e))?;
+    Ok(HttpResponse::Ok().body(output))
 }
 
 // Enable the compressor and log the event and update the FridgeStatus
@@ -154,12 +168,19 @@ fn enable_compressor(compressor: &Pin, status: &mut FridgeStatus) -> Result<()> 
     Ok(())
 }
 
+// Disable the compressor and log the event and update the FridgeStatus
 fn disable_compressor(compressor: &Pin, status: &mut FridgeStatus) -> Result<()> {
     info!("Disabling compressor");
     compressor.set_value(0)?;
     status.mode = Mode::Idle;
     status.mode_ms = 0.0;
     Ok(())
+}
+
+// Write metrics to the Prometheus collectors
+fn write_metrics(status: &FridgeStatus) {
+    INSIDE_TEMP_CELCIUS.set(status.inside_temp);
+    OUTSIDE_TEMP_CELCIUS.set(status.outside_temp);
 }
 
 #[actix_web::main]
@@ -290,6 +311,7 @@ async fn main() -> anyhow::Result<()> {
 
             // TODO: still write log?
             // write_log(status).expect("could not write log");
+            write_metrics(&status);
 
             // Send status updates to all listeners
             for listener in control_listeners.lock().unwrap().iter() {
@@ -310,6 +332,7 @@ async fn main() -> anyhow::Result<()> {
             .service(index)
             .service(update_config)
             .service(status_update)
+            .service(get_metrics)
     })
     .bind("0.0.0.0:8080")?
     .run()
