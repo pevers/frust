@@ -33,6 +33,7 @@ const DUTY_CYCLE_MS: f64 = 300000.0;
 
 const MIN_DUTY_CYCLE_MS: f64 = 0.0;
 
+// All Prometheus metrics
 lazy_static! {
     static ref INSIDE_TEMP_CELCIUS: Gauge = register_gauge!(opts!(
         "inside_temp_celcius",
@@ -44,6 +45,31 @@ lazy_static! {
         "Outside temperature of the room in Celcius"
     ))
     .unwrap();
+    static ref TARGET_TEMP_CELCIUS: Gauge = register_gauge!(opts!(
+        "target_temp_celcius",
+        "Target temperature of the fridge in Celcius"
+    ))
+    .unwrap();
+    static ref PID_CORRECTION: Gauge = register_gauge!(opts!(
+        "pid_correction",
+        "PID controller correction"
+    )).unwrap();    
+    static ref PID_P: Gauge = register_gauge!(opts!(
+        "pid_p",
+        "PID controller proportional gain"
+    )).unwrap();
+    static ref PID_I: Gauge = register_gauge!(opts!(
+        "pid_i",
+        "PID controller integral gain"
+    )).unwrap();
+    static ref PID_D: Gauge = register_gauge!(opts!(
+        "pid_d",
+        "PID controller derivative gain"
+    )).unwrap();
+    static ref COMPRESSOR: Gauge = register_gauge!(opts!(
+        "compressor_activated",
+        "Compressor is activated (1) or turned off (0)"
+    )).unwrap();
 }
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 struct Config {
@@ -178,9 +204,22 @@ fn disable_compressor(compressor: &Pin, status: &mut FridgeStatus) -> Result<()>
 }
 
 // Write metrics to the Prometheus collectors
-fn write_metrics(status: &FridgeStatus) {
+fn write_metrics(status: &FridgeStatus, config: &Config) {
     INSIDE_TEMP_CELCIUS.set(status.inside_temp);
     OUTSIDE_TEMP_CELCIUS.set(status.outside_temp);
+    TARGET_TEMP_CELCIUS.set(config.target_temp);
+    PID_CORRECTION.set(status.correction);
+    PID_P.set(config.p);
+    PID_I.set(config.i);
+    PID_D.set(config.d);
+    match status.mode {
+        Mode::Cooling => {
+            COMPRESSOR.set(1.0);
+        }
+        _ => {
+            COMPRESSOR.set(0.0);
+        }
+    }
 }
 
 #[actix_web::main]
@@ -240,6 +279,7 @@ async fn main() -> anyhow::Result<()> {
 
     let control_pid = pid.clone();
     let control_listeners = listeners.clone();
+    let control_config = config.clone();
     let mut now = Instant::now();
     thread::spawn(move || -> Result<()> {
         loop {
@@ -309,9 +349,11 @@ async fn main() -> anyhow::Result<()> {
             info!("🍺 {:?} 🍺", status);
             status.mode_ms += delta_ms;
 
-            // TODO: still write log?
-            // write_log(status).expect("could not write log");
-            write_metrics(&status);
+            // Write metrics for Prometheus
+            {
+                let mut config = control_config.lock().unwrap();
+                write_metrics(&status, &config);
+            }
 
             // Send status updates to all listeners
             for listener in control_listeners.lock().unwrap().iter() {
