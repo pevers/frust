@@ -50,26 +50,19 @@ lazy_static! {
         "Target temperature of the fridge in Celcius"
     ))
     .unwrap();
-    static ref PID_CORRECTION: Gauge = register_gauge!(opts!(
-        "pid_correction",
-        "PID controller correction"
-    )).unwrap();    
-    static ref PID_P: Gauge = register_gauge!(opts!(
-        "pid_p",
-        "PID controller proportional gain"
-    )).unwrap();
-    static ref PID_I: Gauge = register_gauge!(opts!(
-        "pid_i",
-        "PID controller integral gain"
-    )).unwrap();
-    static ref PID_D: Gauge = register_gauge!(opts!(
-        "pid_d",
-        "PID controller derivative gain"
-    )).unwrap();
+    static ref PID_CORRECTION: Gauge =
+        register_gauge!(opts!("pid_correction", "PID controller correction")).unwrap();
+    static ref PID_P: Gauge =
+        register_gauge!(opts!("pid_p", "PID controller proportional gain")).unwrap();
+    static ref PID_I: Gauge =
+        register_gauge!(opts!("pid_i", "PID controller integral gain")).unwrap();
+    static ref PID_D: Gauge =
+        register_gauge!(opts!("pid_d", "PID controller derivative gain")).unwrap();
     static ref COMPRESSOR: Gauge = register_gauge!(opts!(
         "compressor_activated",
         "Compressor is activated (1) or turned off (0)"
-    )).unwrap();
+    ))
+    .unwrap();
 }
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 struct Config {
@@ -246,8 +239,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Configuration, will be read from an ini file
     let config = Config {
-        target_temp: 4.0,
-        p: 1.0,
+        target_temp: 18.0,
+        p: 4.0,
         i: 0.0,
         d: 0.0,
     };
@@ -351,7 +344,7 @@ async fn main() -> anyhow::Result<()> {
 
             // Write metrics for Prometheus
             {
-                let mut config = control_config.lock().unwrap();
+                let config = control_config.lock().unwrap();
                 write_metrics(&status, &config);
             }
 
