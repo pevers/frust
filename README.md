@@ -2,7 +2,7 @@
 
 Fridge controller written in Rust.
 
-![image](./screenshot.png)
+![image](./monitor.png)
 
 **alarm.sh** Bash script to monitor fridge temperature.
 

@@ -1,8 +1,8 @@
 #!/bin/sh
 
 # ALAAAAARM
-MIN_TEMP=2000
-MAX_TEMP=5000
+MIN_TEMP=16000
+MAX_TEMP=20000
 
 N_RESTARTS=$(systemctl show frust.service -p NRestarts | sed -r 's/NRestarts=([0-9]*)/\1/g')
 LAST_SMS=0
