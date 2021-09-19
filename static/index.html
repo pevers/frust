@@ -2,18 +2,8 @@
 <html>
   <body>
     <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.27.0/moment.min.js"
-      integrity="sha512-rmZcZsyhe0/MAjquhTgiUcb4d9knaFc7b5xAfju483gbEXTkeJRUMIPk6s3ySZMYUHEcjKbjLjyddGWMrNEvZg=="
-      crossorigin="anonymous"
-    ></script>
-    <script
       src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"
       integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg=="
-      crossorigin="anonymous"
-    ></script>
-    <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.9.3/Chart.min.js"
-      integrity="sha512-s+xg36jbIujB2S2VKfpGmlC3T5V2TF3lY48DX7u2r9XzGzgPsa6wTpOQA7J9iffvdeBN0q9tKzRxVxw1JviZPg=="
       crossorigin="anonymous"
     ></script>
     <script
@@ -81,157 +71,10 @@
         );
       }
 
-      async function getTempReadings() {
-        // Get temperature readings for today
-        const todayString = getDateString(new Date());
-        const temperatures = await $.get(`/chart/${todayString}`).promise();
-
-        // Only fetch the last 60 minutes
-        const after = new Date(new Date().getTime() - 60 * 60_000);
-        let inside = [];
-        let controller = [];
-        let outside = [];
-        temperatures
-          .filter((temp) => new Date(temp.timestamp) > after)
-          .forEach((temp) => {
-            inside.push({
-              x: new Date(temp.timestamp),
-              y: temp.inside_temp,
-            });
-            outside.push({
-              x: new Date(temp.timestamp),
-              y: temp.outside_temp,
-            });
-            controller.push({
-              x: new Date(temp.timestamp),
-              y: temp.correction,
-            });
-          });
-        return [inside, controller, outside];
-      }
-
       function getDateString(date) {
         return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
           .toISOString()
           .split("T")[0];
-      }
-
-      function updateChart(status) {
-        if (chart !== null) {
-          chart.data.datasets[0].data.push({
-            x: Date.parse(status.timestamp),
-            y: status.inside_temp,
-          });
-          chart.update();
-        }
-        if (outsideChart !== null) {
-          outsideChart.data.datasets[0].data.push({
-            x: new Date(status.timestamp),
-            y: status.outside_temp,
-          });
-          outsideChart.update();
-        }
-        if (controllerChart !== null) {
-          controllerChart.data.datasets[0].data.push({
-            x: new Date(status.timestamp),
-            y: status.correction,
-          });
-          controllerChart.update();
-        }
-      }
-
-      async function loadChart() {
-        const [
-          insideTemperature,
-          controllerReadings,
-          outsideTemperature,
-        ] = await getTempReadings();
-        const ctx = $("#temp-chart");
-        chart = new Chart(ctx, {
-          type: "line",
-          data: {
-            datasets: [
-              {
-                label: "Inside Temp",
-                data: insideTemperature,
-                borderColor: "#3e95cd",
-                fill: false,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            scales: {
-              xAxes: [
-                {
-                  type: "time",
-                  time: {
-                    tooltipFormat: "ll",
-                  },
-                  distribution: "linear",
-                },
-              ],
-            },
-          },
-        });
-
-        const controllerCtx = $("#controller-chart");
-        controllerChart = new Chart(controllerCtx, {
-          type: "line",
-          data: {
-            datasets: [
-              {
-                label: "Controller Correction",
-                data: controllerReadings,
-                borderColor: "#FF0000",
-                fill: false,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            scales: {
-              xAxes: [
-                {
-                  type: "time",
-                  time: {
-                    tooltipFormat: "ll",
-                  },
-                  distribution: "linear",
-                },
-              ],
-            },
-          },
-        });
-
-        const outsideCtx = $("#outside-temp-chart");
-        outsideChart = new Chart(outsideCtx, {
-          type: "line",
-          data: {
-            datasets: [
-              {
-                label: "Outside Temp",
-                data: outsideTemperature,
-                borderColor: "#00FF00",
-                fill: false,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            scales: {
-              xAxes: [
-                {
-                  type: "time",
-                  time: {
-                    tooltipFormat: "ll",
-                  },
-                  distribution: "linear",
-                },
-              ],
-            },
-          },
-        });
       }
 
       // Setup listeners
@@ -265,7 +108,6 @@
             500
           )
         );
-        loadChart();
       });
     </script>
     <style>
@@ -432,17 +274,6 @@
           <div class="updates">
             <span class="update-notice">Configuration applied!</span>
           </div>
-        </div>
-      </div>
-      <div class="box chart">
-        <div>
-          <canvas id="temp-chart" width="800" height="400"></canvas>
-        </div>
-        <div class="controller-chart">
-          <canvas id="controller-chart" width="800" height="400"></canvas>
-        </div>
-        <div class="outside-chart">
-          <canvas id="outside-temp-chart" width="800" height="400"></canvas>
         </div>
       </div>
     </div>

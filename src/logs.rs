@@ -1,16 +1,18 @@
-use std::{fs::{self, File, OpenOptions}, io::{BufRead, BufReader, Write}};
+use std::{
+    fs::{self, File, OpenOptions},
+    io::{BufRead, BufReader, Write},
+};
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use chrono::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::FridgeStatus;
-
 
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
 pub struct FridgeStatusLog {
     pub timestamp: f64,
-    pub status: FridgeStatus
+    pub status: FridgeStatus,
 }
 
 // Write the current status to storage
@@ -18,7 +20,11 @@ pub fn write_log(status: FridgeStatus) -> Result<()> {
     let timestamp = Utc::now().timestamp();
     let filename = filename()?;
     fs::create_dir_all("log")?;
-    let mut file = OpenOptions::new().write(true).create(true).append(true).open(filename)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .append(true)
+        .open(filename)?;
     file.write(format!("{},{}", timestamp, serde_json::to_string(&status)?).as_bytes())?;
     Ok(())
 }
@@ -33,9 +39,9 @@ pub fn read_logs(date: &str, hour: &str) -> Result<Vec<FridgeStatusLog>> {
         let (timestamp, status) = line.split_once(",").context("invalid log format")?;
         logs.push(FridgeStatusLog {
             timestamp: timestamp.parse()?,
-            status: serde_json::from_str(status)?
+            status: serde_json::from_str(status)?,
         });
-    };
+    }
     Ok(logs)
 }
 

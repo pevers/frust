@@ -3,10 +3,10 @@ use actix_files::NamedFile;
 use actix_web::{get, post, web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
 use anyhow::{Context, Result};
-use logs::FridgeStatusLog;
 use core::f64;
 use gpio::{Direction, Pin};
 use log::info;
+use logs::FridgeStatusLog;
 use pid::Pid;
 use probes::read_temperature;
 use serde::{Deserialize, Serialize};
@@ -21,8 +21,8 @@ use std::{
 use crate::logs::{read_logs, write_log};
 
 mod gpio;
-mod probes;
 mod logs;
+mod probes;
 
 // Minimum of 90 s before turning the compressor on again
 const MINIMUM_IDLE_TIME_MS: f64 = 90000.0;
@@ -33,6 +33,8 @@ const MINIMUM_COOL_TIME_MS: f64 = 15000.0;
 // Duty cycle time in ms
 const DUTY_CYCLE_MS: f64 = 300000.0;
 
+const MIN_DUTY_CYCLE_MS: f64 = 0.0;
+
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 struct Config {
     pub target_temp: f64,
@@ -41,7 +43,7 @@ struct Config {
     pub d: f64,
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Mode {
     Idle,
     Cooling,
@@ -54,6 +56,7 @@ pub struct FridgeStatus {
     pub outside_temp: f64,
     pub correction: f64,
     pub mode: Mode,             // Current mode, switching takes time
+    pub mode_ms: f64,           // Amount of time spent in mode (ms)
     pub duty_cycle: f64,        // Current duty cycle (ms on / total duty cycle)
     pub target_duty_cycle: f64, // Target duty cycle (ms on)
 }
@@ -107,6 +110,8 @@ async fn update_config(
     data: web::Data<AppState>,
     config_update: web::Json<Config>,
 ) -> actix_web::Result<HttpResponse> {
+    let mut temp = data.config.lock().unwrap();
+    temp.target_temp = config_update.target_temp;
     let mut pid = data.pid.lock().unwrap();
     pid.kp = config_update.p;
     pid.ki = config_update.i;
@@ -116,7 +121,7 @@ async fn update_config(
     Ok(HttpResponse::Ok().json(*config_update))
 }
 
-// Upgrades connection to a Websocket and registers a listener
+// Upgrades connection to a Websocket and registers a listener.
 // Fridge status updates are send to all listeners
 #[get("/api/ws")]
 async fn status_update(
@@ -133,9 +138,28 @@ async fn status_update(
 
 // Get the log for a certain date and hour
 #[get("/api/logs/{date}/{hour}")]
-async fn get_log(web::Path((date, hour)): web::Path<(String, String)>) -> actix_web::Result<HttpResponse> {
+async fn get_log(
+    web::Path((date, hour)): web::Path<(String, String)>,
+) -> actix_web::Result<HttpResponse> {
     let logs = read_logs(&date, &hour).expect("could not read logs");
     Ok(HttpResponse::Ok().json(logs))
+}
+
+// Enable the compressor and log the event and update the FridgeStatus
+fn enable_compressor(compressor: &Pin, status: &mut FridgeStatus) -> Result<()> {
+    info!("Enabling compressor!");
+    compressor.set_value(1)?;
+    status.mode = Mode::Cooling;
+    status.mode_ms = 0.0;
+    Ok(())
+}
+
+fn disable_compressor(compressor: &Pin, status: &mut FridgeStatus) -> Result<()> {
+    info!("Disabling compressor");
+    compressor.set_value(0)?;
+    status.mode = Mode::Idle;
+    status.mode_ms = 0.0;
+    Ok(())
 }
 
 #[actix_web::main]
@@ -147,20 +171,20 @@ async fn main() -> anyhow::Result<()> {
     let inside_sensor_path = env::var("INSIDE_SENSOR").expect("INSIDE_SENSOR path not set");
 
     // Set compressor and heater GPIO pins
-    let compressor = Pin::new(23)
+    let compressor = Pin::new(23);
+    compressor
         .export()
         .context("could not export compressor pin")?
         .set_direction(Direction::Out)?
         .set_value(0)?;
-    let heater = Pin::new(24)
+    let heater = Pin::new(24);
+    heater
         .export()
         .context("could not export heater pin")?
         .set_direction(Direction::Out)?
         .set_value(0)?;
-    // TODO: Find out the heater GPIO pin
 
-    // Configuration, will be read from file and stored in a file
-    // TODO: Read from file
+    // Configuration, will be read from an ini file
     let config = Config {
         target_temp: 4.0,
         p: 1.0,
@@ -177,18 +201,18 @@ async fn main() -> anyhow::Result<()> {
         100.0,
         config.target_temp,
     );
-    let config = Arc::new(Mutex::new(config));
-    let pid = Arc::new(Mutex::new(pid));
-
     // Current status, will be updated by the control loop
     let mut status = FridgeStatus {
         inside_temp: 10.0,
         outside_temp: 10.0,
         correction: 0.0,
         mode: Mode::Idle,
+        mode_ms: 0.0,
         duty_cycle: 0.0,
         target_duty_cycle: 0.0,
     };
+    let config = Arc::new(Mutex::new(config));
+    let pid = Arc::new(Mutex::new(pid));
 
     // All listeners for fridge status updates
     let listeners: Arc<Mutex<Vec<Addr<FridgeStatusActor>>>> = Arc::new(Mutex::new(Vec::new()));
@@ -196,7 +220,7 @@ async fn main() -> anyhow::Result<()> {
     let control_pid = pid.clone();
     let control_listeners = listeners.clone();
     let mut now = Instant::now();
-    thread::spawn(move || {
+    thread::spawn(move || -> Result<()> {
         loop {
             let delta_ms: f64 = now.elapsed().as_millis() as f64;
             now = Instant::now();
@@ -205,20 +229,21 @@ async fn main() -> anyhow::Result<()> {
             status.inside_temp =
                 read_temperature(&inside_sensor_path).expect("Could not read inside temperature");
 
-            // TODO: Monitoring? Or just stick to the Bash script
+            // TODO: Monitoring using Prometheus and AlertManager
+
             // Scoped block to quickly update configuration and release the lock
             {
                 let mut control_pid = control_pid.lock().unwrap();
                 let correction = control_pid.next_control_output(status.inside_temp);
                 status.correction = correction.output;
             }
-            status.target_duty_cycle = (status.correction / 100.0).abs();
+            status.target_duty_cycle = (status.correction / 100.0).abs() * DUTY_CYCLE_MS;
 
             // Update duty cycle
             match status.mode {
                 Mode::Idle => {
                     // Update duty cycle
-                    status.duty_cycle = DUTY_CYCLE_MS.max(status.duty_cycle - delta_ms);
+                    status.duty_cycle = MIN_DUTY_CYCLE_MS.max(status.duty_cycle - delta_ms);
 
                     // The 3 options are
                     // Idle -> Idle
@@ -226,13 +251,12 @@ async fn main() -> anyhow::Result<()> {
                     // Idle -> Heating
 
                     if status.duty_cycle < status.target_duty_cycle {
-                        // Status needs to change
-                        // TODO: Check if we meed the deadlines
-                        if status.correction < 0.0 {
-                            status.mode = Mode::Cooling;
-                        }
-                        if status.correction > 0.0 {
-                            status.mode = Mode::Heating;
+                        // Check if we need to turn the cooler/heater on
+                        if status.correction < 0.0 && status.mode_ms >= MINIMUM_IDLE_TIME_MS {
+                            enable_compressor(&compressor, &mut status)?;
+                        } else if status.correction > 0.0 {
+                            // Normally we would turn the heater on if enough
+                            // time passed between the compressor idle time and the heater
                         }
                     }
                 }
@@ -244,27 +268,28 @@ async fn main() -> anyhow::Result<()> {
                     // Cooling -> Idle
                     // Cooling -> Cooling
 
-                    // TODO: Check if we have been ON for long enough
-                    if status.duty_cycle > status.target_duty_cycle {
-                        status.mode = Mode::Idle;
+                    if status.mode_ms < MINIMUM_COOL_TIME_MS {
+                        // Do nothing
+                    } else if status.duty_cycle > status.target_duty_cycle {
+                        disable_compressor(&compressor, &mut status)?;
                     }
                 }
                 Mode::Heating => {
+                    // TODO: For now we do nothing
+
                     status.duty_cycle = DUTY_CYCLE_MS.min(status.duty_cycle + delta_ms);
 
                     // The 2 options are
                     // Heating -> Idle
                     // Heating -> Heating
-
-                    // TODO: Check if we have been ON for long enough
-                    if status.duty_cycle > status.target_duty_cycle {
-                        status.mode = Mode::Idle;
-                    }
                 }
             };
 
             info!("🍺 {:?} 🍺", status);
-            write_log(status).expect("could not write log");
+            status.mode_ms += delta_ms;
+
+            // TODO: still write log?
+            // write_log(status).expect("could not write log");
 
             // Send status updates to all listeners
             for listener in control_listeners.lock().unwrap().iter() {
