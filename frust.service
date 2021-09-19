@@ -4,7 +4,7 @@ Description=Fridge Controller
 [Service]
 Type=simple
 Environment="INSIDE_SENSOR=/sys/bus/w1/devices/10-0008039a5582/w1_slave" "OUTSIDE_SENSOR=/sys/bus/w1/devices/10-0008039e9723/w1_slave"  
-ExecStart=/home/pi/projects/frust/controller/target/debug/frust
+ExecStart=/home/pi/projects/frust/target/debug/frust
 Restart=on-failure
 RestartSec=5s
 

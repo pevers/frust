@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"
+      integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg=="
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"
+      integrity="sha512-v8ng/uGxkge3d1IJuEo6dJP8JViyvms0cly9pnbfRxT6/31c3dRWxIiwGnMSWwZjHKOuY3EVmijs7k1jz/9bLA=="
+      crossorigin="anonymous"
+    ></script>
+    <script>
+      const socket = io("ws://raspberrypi");
+      let lastUpdate = null;
+      let chart = null; // Used to update the chart for new temperature readings
+      let controllerChart = null;
+      let outsideChart = null;
+
+      const getStatusSymbol = (status) => {
+        if (status === "Cooling") {
+          return "❄️";
+        }
+        return "💤";
+      };
+
+      socket.on("status", (data) => {
+        console.log("Received status", data);
+        $(".inside-temp").html(data.inside_temp.toPrecision(4) + "°C");
+        $(".outside-temp").html(data.outside_temp.toPrecision(4) + "°C");
+        $(".status").html(getStatusSymbol(data.status));
+        $(".last-updated").html(new Date().toLocaleTimeString());
+        $(".target-temp-status").html(data.target_temp);
+        $(".p-status").html(data.p);
+        $(".i-status").html(data.i);
+        $(".d-status").html(data.d);
+
+        // If this is the first status update, also update the input boxes
+        if (!lastUpdate) {
+          $(".target-temp-input").val(data.target_temp);
+          $(".p-input").val(data.p);
+          $(".i-input").val(data.i);
+          $(".d-input").val(data.d);
+          lastUpdate = data;
+        }
+        updateChart(data);
+      });
+
+      function setTemperature(settings) {
+        console.log("setting temperature", settings);
+        $.ajax("/temperature", {
+          method: "POST",
+          data: settings,
+          headers: {
+            Authorization: `api-key ${$(".api-key").val()}`,
+          },
+        }).then(
+          (data) => {
+            $(".update-notice").show();
+            $(".update-notice").fadeOut(5000);
+            console.log("Response from server", data);
+            s;
+          },
+          (error) => {
+            $(".update-notice").show();
+            $(".update-notice").html("Error updating configuration");
+            $(".update-notice").fadeOut(5000);
+            console.error("Error setting temperature", error);
+          }
+        );
+      }
+
+      function getDateString(date) {
+        return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+          .toISOString()
+          .split("T")[0];
+      }
+
+      // Setup listeners
+      $(document).ready(() => {
+        function debounce(fn, ms) {
+          let timer = 0;
+          return function (...args) {
+            clearTimeout(timer);
+            timer = setTimeout(fn.bind(this, ...args), ms || 0);
+          };
+        }
+
+        $(".target-temp-set, .p-set, .i-set, .d-set").on(
+          "click",
+          debounce((event) => {
+            // Hacky way to convert input fields to API parameters
+            const type = event.target.className.split("-set")[0];
+            const settings = {};
+            settings[type.replace("-", "_")] = Number(
+              $(`.${type}-input`).val()
+            );
+            setTemperature(settings);
+          }, 500)
+        );
+
+        $(".api-key").val(window.localStorage.getItem("apiKey"));
+        $(".api-key").on(
+          "input",
+          debounce(
+            () => window.localStorage.setItem("apiKey", $(".api-key").val()),
+            500
+          )
+        );
+      });
+    </script>
+    <style>
+      html,
+      body {
+        font-family: Sentinel SSm A, Sentinel SSm B, system-ui, -apple-system,
+          BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif,
+          Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol;
+        font-size: 1.2rem;
+        font-weight: 400;
+        line-height: 1.7;
+        height: 98%;
+      }
+      p {
+        font-size: 12px;
+      }
+      .wrapper {
+        height: 90%;
+        display: flex;
+        flex-direction: row;
+        justify-content: center;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .box {
+        min-width: 240px;
+        display: flex;
+        flex-direction: column;
+      }
+      .chart {
+        padding-left: 150px;
+      }
+      .status-wrapper {
+        flex-basis: 50%;
+        display: flex;
+        justify-content: space-between;
+      }
+      .settings-wrapper {
+        padding-top: 10px;
+        flex-basis: 50%;
+        display: flex;
+        flex-direction: column;
+      }
+      .settings-row {
+        display: flex;
+        justify-content: space-between;
+      }
+      .submit {
+        margin-left: 8px;
+      }
+      .updates {
+        height: 15px;
+      }
+      .update-notice {
+        font-size: 10px;
+        display: none;
+        color: green;
+      }
+      label {
+        font-size: 0.7rem;
+        line-height: 1;
+      }
+    </style>
+    <div class="wrapper">
+      <div class="box">
+        <div class="status-wrapper">
+          <div class="inside-temp"></div>
+          <div class="status">♨️</div>
+        </div>
+        <div class="settings-wrapper">
+          <form novalidate>
+            <div class="settings-row">
+              <div>
+                <label for="outside-temp"> Outside temperature </label>
+              </div>
+              <div>
+                <p class="outside-temp"></p>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div>
+                <label for="target-temp"> T </label>
+              </div>
+              <div>
+                <p class="target-temp-status"></p>
+              </div>
+              <div>
+                <input
+                  name="target-temp"
+                  class="target-temp-input"
+                  size="5"
+                  type="number"
+                  step="0.5"
+                />
+                <input type="button" class="target-temp-set" value="SET" />
+              </div>
+            </div>
+            <div class="settings-row">
+              <div>
+                <label for="p"> Kp </label>
+              </div>
+              <div>
+                <p class="p-status"></p>
+              </div>
+              <div>
+                <input
+                  name="p"
+                  class="p-input"
+                  size="5"
+                  type="number"
+                  step="0.01"
+                />
+                <input type="button" class="p-set" value="SET" />
+              </div>
+            </div>
+            <div class="settings-row">
+              <div>
+                <label for="i"> Ki </label>
+              </div>
+              <div>
+                <p class="i-status"></p>
+              </div>
+              <div>
+                <input
+                  name="i"
+                  class="i-input"
+                  size="5"
+                  type="number"
+                  step="0.001"
+                />
+                <input type="button" class="i-set" value="SET" />
+              </div>
+            </div>
+            <div class="settings-row">
+              <div>
+                <label for="d"> Kd </label>
+              </div>
+              <div>
+                <p class="d-status"></p>
+              </div>
+              <div>
+                <input
+                  name="d"
+                  class="d-input"
+                  size="5"
+                  type="number"
+                  step="0.001"
+                />
+                <input type="button" class="d-set" value="SET" />
+              </div>
+            </div>
+            <div class="settings-row">
+              <div>
+                <label for="api-key"> api-key </label>
+              </div>
+              <div>
+                <input name="api-key" class="api-key" type="password" />
+              </div>
+            </div>
+            <div class="settings-row">
+              <p>Last updated: <span class="last-updated"></span></p>
+            </div>
+          </form>
+          <div class="updates">
+            <span class="update-notice">Configuration applied!</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
