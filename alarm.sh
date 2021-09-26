@@ -37,13 +37,13 @@ do
   if [ "$INSIDE" -lt "$MIN_TEMP" ];
   then
     echo "Warning, temperature $INSIDE is way too low! Sending SMS"
-    send_sms "Temperature is below $MIN_TEMP degrees!"
+    send_sms "Temperature is below $MIN_TEMP degrees! It is $INSIDE degrees"
   fi
 
   if [ "$INSIDE" -gt "$MAX_TEMP" ];
   then
     echo "Warning, temperature $INSIDE is way too high! Sending SMS"
-    send_sms "Temperature is above $MAX_TEMP degrees!"
+    send_sms "Temperature is above $MAX_TEMP degrees! It is $INSIDE degrees"
   fi
 
   sleep 5
