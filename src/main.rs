@@ -239,7 +239,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Configuration, will be read from an ini file
     let config = Config {
-        target_temp: 18.0,
+        target_temp: 20.0,
         p: 4.0,
         i: 0.0,
         d: 0.0,
