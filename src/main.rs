@@ -1,10 +1,12 @@
-use actix::{Actor, Addr, Handler, Message, StreamHandler};
+use actix::Message;
 use actix_files::NamedFile;
-use actix_web::{error, get, post, web, App, Error, HttpRequest, HttpResponse, HttpServer};
-use actix_web_actors::ws;
+use actix_web::dev::ServiceRequest;
+use actix_web::{error, get, web, App, Error, HttpResponse, HttpServer};
+use actix_web_httpauth::extractors::bearer::BearerAuth;
+use actix_web_httpauth::middleware::HttpAuthentication;
 use anyhow::{Context, Result};
 use core::f64;
-use gpio::{Direction, Pin};
+use gpio::Pin;
 use lazy_static::lazy_static;
 use log::info;
 use pid::Pid;
@@ -13,24 +15,41 @@ use prometheus::{opts, register_gauge, Encoder, Gauge, TextEncoder};
 use serde::{Deserialize, Serialize};
 use std::{
     env,
+    fs::File,
+    io::BufReader,
     path::Path,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
 
+use crate::gpio::Direction;
+
 mod gpio;
 mod probes;
 
+// Wait an hour before switching between heating and cooling mode
+const MINIMUM_HEATING_COOLING_SWITCH_TIME_MS: f64 = 3600000.0;
+
+// Wait an hour before switching between cooling and heating mode
+const MINIMUM_COOLING_HEATING_SWITCH_TIME_MS: f64 = 3600000.0;
+
 // Minimum of 90 s before turning the compressor on again
-const MINIMUM_IDLE_TIME_MS: f64 = 90000.0;
+const MINIMUM_IDLE_TIME_COOLING_MS: f64 = 90000.0;
+
+// Wait 180 seconds before turning on the heater again
+const MINIMUM_IDLE_TIME_HEATING_MS: f64 = 180000.0;
 
 // Minimum of 15 s of cooling before turning it off
 const MINIMUM_COOL_TIME_MS: f64 = 15000.0;
 
+// Minimum of 20 seconds heating
+const MINIMUM_HEAT_TIME_MS: f64 = 20000.0;
+
 // Duty cycle time in ms
 const DUTY_CYCLE_MS: f64 = 300000.0;
 
+// Current duty cycle
 const MIN_DUTY_CYCLE_MS: f64 = 0.0;
 
 // All Prometheus metrics
@@ -63,13 +82,32 @@ lazy_static! {
         "Compressor is activated (1) or turned off (0)"
     ))
     .unwrap();
+    static ref HEATER: Gauge = register_gauge!(opts!(
+        "heater_activated",
+        "Heater is activated (1) or turned off (0)"
+    ))
+    .unwrap();
 }
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 struct Config {
+    // Mode of operation: Cooling or Heating
+    pub operation_mode: OperationMode,
     pub target_temp: f64,
     pub p: f64,
     pub i: f64,
     pub d: f64,
+}
+
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            operation_mode: OperationMode::Heating,
+            target_temp: 20.0,
+            p: 8.0,
+            i: 0.0,
+            d: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
@@ -79,15 +117,54 @@ pub enum Mode {
     Heating,
 }
 
+// Mode of operation
+// Either cooling or heating
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+pub enum OperationMode {
+    Cooling,
+    Heating,
+}
+
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct FridgeStatus {
+    // Temperature in milli degrees
     pub inside_temp: f64,
+
+    // Outside temp in milli degrees
     pub outside_temp: f64,
+
+    // Correction from the PID controller
     pub correction: f64,
-    pub mode: Mode,             // Current mode, switching takes time
-    pub mode_ms: f64,           // Amount of time spent in mode (ms)
-    pub duty_cycle: f64,        // Current duty cycle (ms on / total duty cycle)
-    pub target_duty_cycle: f64, // Target duty cycle (ms on)
+
+    // Current operation mode (heating or cooling)
+    pub operation_mode: OperationMode,
+
+    // Current mode while operational
+    pub mode: Mode,
+
+    // Amount of time spent in mode (ms)
+    pub mode_ms: f64,
+
+    // Current duty cycle (ms on / total duty cycle)
+    pub duty_cycle: f64,
+
+    // Target duty cycle (ms on)
+    pub target_duty_cycle: f64,
+}
+
+impl Default for FridgeStatus {
+    fn default() -> FridgeStatus {
+        FridgeStatus {
+            inside_temp: 10.0,
+            outside_temp: 10.0,
+            correction: 0.0,
+            operation_mode: OperationMode::Heating,
+            mode: Mode::Idle,
+            mode_ms: 0.0,
+            duty_cycle: 0.0,
+            target_duty_cycle: 0.0,
+        }
+    }
 }
 
 #[derive(Message, Serialize)]
@@ -96,35 +173,9 @@ struct FridgeStatusMessage {
     pub status: FridgeStatus,
 }
 
-/// Define HTTP actor
-struct FridgeStatusActor;
-
-impl Actor for FridgeStatusActor {
-    type Context = ws::WebsocketContext<Self>;
-}
-
-impl Handler<FridgeStatusMessage> for FridgeStatusActor {
-    type Result = ();
-
-    fn handle(&mut self, msg: FridgeStatusMessage, ctx: &mut Self::Context) {
-        ctx.text(serde_json::to_string(&msg).unwrap());
-    }
-}
-
-/// Handler for ws::Message message
-impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for FridgeStatusActor {
-    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
-        match msg {
-            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
-            _ => (),
-        }
-    }
-}
-
 struct AppState {
-    config: Arc<Mutex<Config>>, // TODO: Can probably be removed
+    config: Arc<Mutex<Config>>,
     pid: Arc<Mutex<Pid<f64>>>,
-    listeners: Arc<Mutex<Vec<Addr<FridgeStatusActor>>>>,
 }
 
 // Display the UI
@@ -134,35 +185,33 @@ async fn index() -> actix_web::Result<NamedFile> {
 }
 
 // Update the configuration of the controller
-#[post("/api/config")]
 async fn update_config(
     data: web::Data<AppState>,
     config_update: web::Json<Config>,
 ) -> actix_web::Result<HttpResponse> {
+    let update = Config {
+        operation_mode: config_update.operation_mode,
+        target_temp: config_update.target_temp,
+        p: config_update.p,
+        i: config_update.i,
+        d: config_update.d,
+    };
     let mut temp = data.config.lock().unwrap();
-    temp.target_temp = config_update.target_temp;
+    temp.target_temp = update.target_temp;
     let mut pid = data.pid.lock().unwrap();
-    pid.kp = config_update.p;
-    pid.ki = config_update.i;
-    pid.kd = config_update.d;
+    pid.kp = update.p;
+    pid.ki = update.i;
+    pid.kd = update.d;
     pid.reset_integral_term();
+    serde_json::to_writer(&File::create("config.json")?, &update)?;
     info!("Configuration updated {:?}", config_update);
     Ok(HttpResponse::Ok().json(*config_update))
 }
 
-// Upgrades connection to a Websocket and registers a listener.
-// Fridge status updates are send to all listeners
-#[get("/api/ws")]
-async fn status_update(
-    req: HttpRequest,
-    stream: web::Payload,
-    data: web::Data<AppState>,
-) -> actix_web::Result<HttpResponse, Error> {
-    let (actor, resp) = ws::start_with_addr(FridgeStatusActor {}, &req, stream)?;
-    let mut listeners = data.listeners.lock().unwrap();
-    listeners.push(actor);
-    info!("Actor connected");
-    Ok(resp)
+#[get("/api/config")]
+async fn get_config(data: web::Data<AppState>) -> actix_web::Result<HttpResponse> {
+    let config = data.config.lock().unwrap().clone();
+    Ok(HttpResponse::Ok().json(config))
 }
 
 #[get("/metrics")]
@@ -176,6 +225,16 @@ async fn get_metrics() -> actix_web::Result<HttpResponse> {
     let output =
         String::from_utf8(buffer.clone()).map_err(|e| error::ErrorInternalServerError(e))?;
     Ok(HttpResponse::Ok().body(output))
+}
+
+// Protect update events with a bearer token
+async fn validator(req: ServiceRequest, auth: BearerAuth) -> Result<ServiceRequest, Error> {
+    let expected =
+        env::var("TOKEN").map_err(|_| error::ErrorInternalServerError("Token not set"))?;
+    if expected == auth.token() {
+        return Ok(req);
+    }
+    Err(error::ErrorUnauthorized("Not authorized"))
 }
 
 // Enable the compressor and log the event and update the FridgeStatus
@@ -196,6 +255,24 @@ fn disable_compressor(compressor: &Pin, status: &mut FridgeStatus) -> Result<()>
     Ok(())
 }
 
+// Enable the heater and log the event and update the FridgeStatus
+fn enable_heater(compressor: &Pin, status: &mut FridgeStatus) -> Result<()> {
+    info!("Enabling heater!");
+    compressor.set_value(1)?;
+    status.mode = Mode::Heating;
+    status.mode_ms = 0.0;
+    Ok(())
+}
+
+// Disable the heater and log the event and update the FridgeStatus
+fn disable_heater(compressor: &Pin, status: &mut FridgeStatus) -> Result<()> {
+    info!("Disabling heater");
+    compressor.set_value(0)?;
+    status.mode = Mode::Idle;
+    status.mode_ms = 0.0;
+    Ok(())
+}
+
 // Write metrics to the Prometheus collectors
 fn write_metrics(status: &FridgeStatus, config: &Config) {
     INSIDE_TEMP_CELCIUS.set(status.inside_temp);
@@ -209,10 +286,25 @@ fn write_metrics(status: &FridgeStatus, config: &Config) {
         Mode::Cooling => {
             COMPRESSOR.set(1.0);
         }
+        Mode::Heating => {
+            HEATER.set(1.0);
+        }
         _ => {
             COMPRESSOR.set(0.0);
+            HEATER.set(0.0);
         }
     }
+}
+
+fn read_config() -> Result<Config> {
+    let file = File::open("config.json");
+    if let Ok(f) = file {
+        let config = serde_json::from_reader(BufReader::new(f))?;
+        return Ok(config);
+    }
+    let config = Config::default();
+    serde_json::to_writer(&File::create("config.json")?, &config)?;
+    Ok(config)
 }
 
 #[actix_web::main]
@@ -237,13 +329,7 @@ async fn main() -> anyhow::Result<()> {
         .set_direction(Direction::Out)?
         .set_value(0)?;
 
-    // Configuration, will be read from an ini file
-    let config = Config {
-        target_temp: 20.0,
-        p: 4.0,
-        i: 0.0,
-        d: 0.0,
-    };
+    let config = read_config()?;
     let pid = Pid::new(
         config.p,
         config.i,
@@ -255,23 +341,11 @@ async fn main() -> anyhow::Result<()> {
         config.target_temp,
     );
     // Current status, will be updated by the control loop
-    let mut status = FridgeStatus {
-        inside_temp: 10.0,
-        outside_temp: 10.0,
-        correction: 0.0,
-        mode: Mode::Idle,
-        mode_ms: 0.0,
-        duty_cycle: 0.0,
-        target_duty_cycle: 0.0,
-    };
+    let mut status = FridgeStatus::default();
     let config = Arc::new(Mutex::new(config));
     let pid = Arc::new(Mutex::new(pid));
 
-    // All listeners for fridge status updates
-    let listeners: Arc<Mutex<Vec<Addr<FridgeStatusActor>>>> = Arc::new(Mutex::new(Vec::new()));
-
     let control_pid = pid.clone();
-    let control_listeners = listeners.clone();
     let control_config = config.clone();
     let mut now = Instant::now();
     thread::spawn(move || -> Result<()> {
@@ -283,8 +357,6 @@ async fn main() -> anyhow::Result<()> {
             status.inside_temp =
                 read_temperature(&inside_sensor_path).expect("Could not read inside temperature");
 
-            // TODO: Monitoring using Prometheus and AlertManager
-
             // Scoped block to quickly update configuration and release the lock
             {
                 let mut control_pid = control_pid.lock().unwrap();
@@ -293,51 +365,105 @@ async fn main() -> anyhow::Result<()> {
             }
             status.target_duty_cycle = (status.correction / 100.0).abs() * DUTY_CYCLE_MS;
 
-            // Update duty cycle
-            match status.mode {
-                Mode::Idle => {
+            // This is one big messy state machine, I'll create ASCII art soon
+            // Basically, it works by having two operation modes cooling and heating.
+            // You can only switch between the two if a long period has passed
+            // to prevent any oscillation.
+            match control_config.lock().unwrap().operation_mode {
+                OperationMode::Cooling => {
                     // Update duty cycle
-                    status.duty_cycle = MIN_DUTY_CYCLE_MS.max(status.duty_cycle - delta_ms);
+                    match status.mode {
+                        Mode::Idle => {
+                            // Update duty cycle
+                            status.duty_cycle = MIN_DUTY_CYCLE_MS.max(status.duty_cycle - delta_ms);
 
-                    // The 3 options are
-                    // Idle -> Idle
-                    // Idle -> Cooling
-                    // Idle -> Heating
+                            // The 2 options are
+                            // Idle -> Idle
+                            // Idle -> Cooling
 
-                    if status.duty_cycle < status.target_duty_cycle {
-                        // Check if we need to turn the cooler/heater on
-                        if status.correction < 0.0 && status.mode_ms >= MINIMUM_IDLE_TIME_MS {
-                            enable_compressor(&compressor, &mut status)?;
-                        } else if status.correction > 0.0 {
-                            // Normally we would turn the heater on if enough
-                            // time passed between the compressor idle time and the heater
+                            if status.correction < 0.0 {
+                                // Check if we need to turn the cooler/heater on
+                                if status.duty_cycle < status.target_duty_cycle
+                                    && status.mode_ms >= MINIMUM_IDLE_TIME_COOLING_MS
+                                {
+                                    enable_compressor(&compressor, &mut status)?;
+                                }
+                                // We have cooled enough
+                            } else {
+                                // Possibly switch to heating
+                                if status.mode_ms > MINIMUM_COOLING_HEATING_SWITCH_TIME_MS {
+                                    info!("Switching to operation mode heating!");
+                                    status.mode = Mode::Heating;
+                                    status.mode_ms = 0.0;
+                                }
+                            }
+                        }
+                        Mode::Cooling => {
+                            // Update duty cycle
+                            status.duty_cycle = DUTY_CYCLE_MS.min(status.duty_cycle + delta_ms);
+
+                            // The 2 options are
+                            // Cooling -> Idle
+                            // Cooling -> Cooling
+
+                            if status.mode_ms < MINIMUM_COOL_TIME_MS {
+                                // Do nothing because we keep cooling
+                            } else if status.duty_cycle > status.target_duty_cycle {
+                                disable_compressor(&compressor, &mut status)?;
+                            }
+                        }
+                        _ => {
+                            panic!("Invalid mode for operation Cooling");
                         }
                     }
                 }
-                Mode::Cooling => {
+                OperationMode::Heating => {
                     // Update duty cycle
-                    status.duty_cycle = DUTY_CYCLE_MS.min(status.duty_cycle + delta_ms);
+                    match status.mode {
+                        Mode::Idle => {
+                            // Update duty cycle
+                            status.duty_cycle = MIN_DUTY_CYCLE_MS.max(status.duty_cycle - delta_ms);
 
-                    // The 2 options are
-                    // Cooling -> Idle
-                    // Cooling -> Cooling
+                            // The 2 options are
+                            // Idle -> Idle
+                            // Idle -> Heating
 
-                    if status.mode_ms < MINIMUM_COOL_TIME_MS {
-                        // Do nothing
-                    } else if status.duty_cycle > status.target_duty_cycle {
-                        disable_compressor(&compressor, &mut status)?;
+                            if status.correction > 0.0 {
+                                // Check if we need to turn the cooler/heater on
+                                if status.duty_cycle < status.target_duty_cycle
+                                    && status.mode_ms >= MINIMUM_IDLE_TIME_HEATING_MS
+                                {
+                                    enable_heater(&heater, &mut status)?;
+                                }
+                            } else {
+                                // Possibly switch to heating
+                                if status.mode_ms > MINIMUM_HEATING_COOLING_SWITCH_TIME_MS {
+                                    info!("Switching to operation mode cooling!");
+                                    status.mode = Mode::Cooling;
+                                    status.mode_ms = 0.0;
+                                }
+                            }
+                        }
+                        Mode::Heating => {
+                            // Update duty cycle
+                            status.duty_cycle = DUTY_CYCLE_MS.min(status.duty_cycle + delta_ms);
+
+                            // The 2 options are
+                            // Heating -> Idle
+                            // Heating -> Heating
+
+                            if status.mode_ms < MINIMUM_HEAT_TIME_MS {
+                                // Do nothing
+                            } else if status.duty_cycle > status.target_duty_cycle {
+                                disable_heater(&compressor, &mut status)?;
+                            }
+                        }
+                        _ => {
+                            panic!("Invalid mode for operation Heating");
+                        }
                     }
                 }
-                Mode::Heating => {
-                    // TODO: For now we do nothing
-
-                    status.duty_cycle = DUTY_CYCLE_MS.min(status.duty_cycle + delta_ms);
-
-                    // The 2 options are
-                    // Heating -> Idle
-                    // Heating -> Heating
-                }
-            };
+            }
 
             info!("🍺 {:?} 🍺", status);
             status.mode_ms += delta_ms;
@@ -348,10 +474,6 @@ async fn main() -> anyhow::Result<()> {
                 write_metrics(&status, &config);
             }
 
-            // Send status updates to all listeners
-            for listener in control_listeners.lock().unwrap().iter() {
-                listener.do_send(FridgeStatusMessage { status });
-            }
             thread::sleep(Duration::from_millis(1000));
         }
     });
@@ -360,13 +482,17 @@ async fn main() -> anyhow::Result<()> {
         let state = web::Data::new(AppState {
             config: config.clone(),
             pid: pid.clone(),
-            listeners: listeners.clone(),
         });
+
         App::new()
             .app_data(state.clone())
             .service(index)
-            .service(update_config)
-            .service(status_update)
+            .service(get_config)
+            .service(
+                web::resource("/api/config")
+                    .route(web::post().to(update_config))
+                    .wrap(HttpAuthentication::bearer(validator)),
+            )
             .service(get_metrics)
     })
     .bind("0.0.0.0:8080")?

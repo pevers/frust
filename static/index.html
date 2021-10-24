@@ -1,83 +1,37 @@
 <!DOCTYPE html>
 <html>
+  <head>
+    <meta charset="utf-8" />
+    <title>PID Controller Frust</title>
+  </head>
   <body>
     <script
       src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"
       integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg=="
       crossorigin="anonymous"
     ></script>
-    <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"
-      integrity="sha512-v8ng/uGxkge3d1IJuEo6dJP8JViyvms0cly9pnbfRxT6/31c3dRWxIiwGnMSWwZjHKOuY3EVmijs7k1jz/9bLA=="
-      crossorigin="anonymous"
-    ></script>
     <script>
-      const socket = io("ws://raspberrypi");
-      let lastUpdate = null;
-      let chart = null; // Used to update the chart for new temperature readings
-      let controllerChart = null;
-      let outsideChart = null;
-
-      const getStatusSymbol = (status) => {
-        if (status === "Cooling") {
-          return "❄️";
-        }
-        return "💤";
-      };
-
-      socket.on("status", (data) => {
-        console.log("Received status", data);
-        $(".inside-temp").html(data.inside_temp.toPrecision(4) + "°C");
-        $(".outside-temp").html(data.outside_temp.toPrecision(4) + "°C");
-        $(".status").html(getStatusSymbol(data.status));
-        $(".last-updated").html(new Date().toLocaleTimeString());
-        $(".target-temp-status").html(data.target_temp);
-        $(".p-status").html(data.p);
-        $(".i-status").html(data.i);
-        $(".d-status").html(data.d);
-
-        // If this is the first status update, also update the input boxes
-        if (!lastUpdate) {
-          $(".target-temp-input").val(data.target_temp);
-          $(".p-input").val(data.p);
-          $(".i-input").val(data.i);
-          $(".d-input").val(data.d);
-          lastUpdate = data;
-        }
-        updateChart(data);
-      });
-
-      function setTemperature(settings) {
-        console.log("setting temperature", settings);
-        $.ajax("/temperature", {
+      function setConfig(settings) {
+        $.ajax("/api/config", {
           method: "POST",
-          data: settings,
+          data: JSON.stringify(settings),
           headers: {
-            Authorization: `api-key ${$(".api-key").val()}`,
+            Authorization: `Bearer ${$(".api-key").val()}`,
+            "Content-Type": "application/json",
           },
         }).then(
           (data) => {
             $(".update-notice").show();
             $(".update-notice").fadeOut(5000);
-            console.log("Response from server", data);
-            s;
           },
           (error) => {
             $(".update-notice").show();
             $(".update-notice").html("Error updating configuration");
             $(".update-notice").fadeOut(5000);
-            console.error("Error setting temperature", error);
           }
         );
       }
 
-      function getDateString(date) {
-        return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-          .toISOString()
-          .split("T")[0];
-      }
-
-      // Setup listeners
       $(document).ready(() => {
         function debounce(fn, ms) {
           let timer = 0;
@@ -87,27 +41,37 @@
           };
         }
 
-        $(".target-temp-set, .p-set, .i-set, .d-set").on(
+        $.ajax("/api/config", {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${$(".api-key").val()}`,
+          },
+        }).then((data) => {
+          $(".target-temp-input").val(data.target_temp);
+          $(".p-input").val(data.p);
+          $(".i-input").val(data.i);
+          $(".d-input").val(data.d);
+        });
+
+        $(".set").on(
           "click",
           debounce((event) => {
-            // Hacky way to convert input fields to API parameters
-            const type = event.target.className.split("-set")[0];
-            const settings = {};
-            settings[type.replace("-", "_")] = Number(
-              $(`.${type}-input`).val()
-            );
-            setTemperature(settings);
+            window.localStorage.setItem("apiKey", $(".api-key").val());
+            const p = Number($(".p-input").val());
+            const i = Number($(".i-input").val());
+            const d = Number($(".d-input").val());
+            const target_temp = Number($(".target-temp-input").val());
+            setConfig({
+              p,
+              i,
+              d,
+              target_temp,
+              operation_mode: "Heating", // We should probably get rid of this
+            });
           }, 500)
         );
 
         $(".api-key").val(window.localStorage.getItem("apiKey"));
-        $(".api-key").on(
-          "input",
-          debounce(
-            () => window.localStorage.setItem("apiKey", $(".api-key").val()),
-            500
-          )
-        );
       });
     </script>
     <style>
@@ -137,9 +101,6 @@
         display: flex;
         flex-direction: column;
       }
-      .chart {
-        padding-left: 150px;
-      }
       .status-wrapper {
         flex-basis: 50%;
         display: flex;
@@ -155,9 +116,6 @@
         display: flex;
         justify-content: space-between;
       }
-      .submit {
-        margin-left: 8px;
-      }
       .updates {
         height: 15px;
       }
@@ -165,6 +123,10 @@
         font-size: 10px;
         display: none;
         color: green;
+      }
+      .set {
+        display: block;
+        width: 100%;
       }
       label {
         font-size: 0.7rem;
@@ -175,18 +137,10 @@
       <div class="box">
         <div class="status-wrapper">
           <div class="inside-temp"></div>
-          <div class="status">♨️</div>
+          <div class="status">🍺 ❄️ ♨️</div>
         </div>
         <div class="settings-wrapper">
           <form novalidate>
-            <div class="settings-row">
-              <div>
-                <label for="outside-temp"> Outside temperature </label>
-              </div>
-              <div>
-                <p class="outside-temp"></p>
-              </div>
-            </div>
             <div class="settings-row">
               <div>
                 <label for="target-temp"> T </label>
@@ -202,7 +156,6 @@
                   type="number"
                   step="0.5"
                 />
-                <input type="button" class="target-temp-set" value="SET" />
               </div>
             </div>
             <div class="settings-row">
@@ -220,7 +173,6 @@
                   type="number"
                   step="0.01"
                 />
-                <input type="button" class="p-set" value="SET" />
               </div>
             </div>
             <div class="settings-row">
@@ -238,7 +190,6 @@
                   type="number"
                   step="0.001"
                 />
-                <input type="button" class="i-set" value="SET" />
               </div>
             </div>
             <div class="settings-row">
@@ -256,7 +207,6 @@
                   type="number"
                   step="0.001"
                 />
-                <input type="button" class="d-set" value="SET" />
               </div>
             </div>
             <div class="settings-row">
@@ -268,7 +218,7 @@
               </div>
             </div>
             <div class="settings-row">
-              <p>Last updated: <span class="last-updated"></span></p>
+              <input type="button" class="set" value="SET" />
             </div>
           </form>
           <div class="updates">
