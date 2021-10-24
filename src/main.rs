@@ -455,7 +455,7 @@ async fn main() -> anyhow::Result<()> {
                             if status.mode_ms < MINIMUM_HEAT_TIME_MS {
                                 // Do nothing
                             } else if status.duty_cycle > status.target_duty_cycle {
-                                disable_heater(&compressor, &mut status)?;
+                                disable_heater(&heater, &mut status)?;
                             }
                         }
                         _ => {
