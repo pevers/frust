@@ -256,18 +256,18 @@ fn disable_compressor(compressor: &Pin, status: &mut FridgeStatus) -> Result<()>
 }
 
 // Enable the heater and log the event and update the FridgeStatus
-fn enable_heater(compressor: &Pin, status: &mut FridgeStatus) -> Result<()> {
+fn enable_heater(heater: &Pin, status: &mut FridgeStatus) -> Result<()> {
     info!("Enabling heater!");
-    compressor.set_value(1)?;
+    heater.set_value(1)?;
     status.mode = Mode::Heating;
     status.mode_ms = 0.0;
     Ok(())
 }
 
 // Disable the heater and log the event and update the FridgeStatus
-fn disable_heater(compressor: &Pin, status: &mut FridgeStatus) -> Result<()> {
+fn disable_heater(heater: &Pin, status: &mut FridgeStatus) -> Result<()> {
     info!("Disabling heater");
-    compressor.set_value(0)?;
+    heater.set_value(0)?;
     status.mode = Mode::Idle;
     status.mode_ms = 0.0;
     Ok(())
@@ -393,7 +393,7 @@ async fn main() -> anyhow::Result<()> {
                                 // Possibly switch to heating
                                 if status.mode_ms > MINIMUM_COOLING_HEATING_SWITCH_TIME_MS {
                                     info!("Switching to operation mode heating!");
-                                    status.mode = Mode::Heating;
+                                    status.operation_mode = Mode::Heating;
                                     status.mode_ms = 0.0;
                                 }
                             }
@@ -436,10 +436,10 @@ async fn main() -> anyhow::Result<()> {
                                     enable_heater(&heater, &mut status)?;
                                 }
                             } else {
-                                // Possibly switch to heating
+                                // Possibly switch to cooling
                                 if status.mode_ms > MINIMUM_HEATING_COOLING_SWITCH_TIME_MS {
                                     info!("Switching to operation mode cooling!");
-                                    status.mode = Mode::Cooling;
+                                    status.operation_mode = Mode::Cooling;
                                     status.mode_ms = 0.0;
                                 }
                             }
