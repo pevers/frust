@@ -393,7 +393,7 @@ async fn main() -> anyhow::Result<()> {
                                 // Possibly switch to heating
                                 if status.mode_ms > MINIMUM_COOLING_HEATING_SWITCH_TIME_MS {
                                     info!("Switching to operation mode heating!");
-                                    status.operation_mode = Mode::Heating;
+                                    status.operation_mode = OperationMode::Heating;
                                     status.mode_ms = 0.0;
                                 }
                             }
@@ -439,7 +439,7 @@ async fn main() -> anyhow::Result<()> {
                                 // Possibly switch to cooling
                                 if status.mode_ms > MINIMUM_HEATING_COOLING_SWITCH_TIME_MS {
                                     info!("Switching to operation mode cooling!");
-                                    status.operation_mode = Mode::Cooling;
+                                    status.operation_mode = OperationMode::Cooling;
                                     status.mode_ms = 0.0;
                                 }
                             }
