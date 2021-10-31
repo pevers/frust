@@ -43,8 +43,8 @@ const MINIMUM_IDLE_TIME_HEATING_MS: f64 = 180000.0;
 // Minimum of 15 s of cooling before turning it off
 const MINIMUM_COOL_TIME_MS: f64 = 15000.0;
 
-// Minimum of 20 seconds heating
-const MINIMUM_HEAT_TIME_MS: f64 = 20000.0;
+// Minimum of 30 seconds heating
+const MINIMUM_HEAT_TIME_MS: f64 = 30000.0;
 
 // Duty cycle time in ms
 const DUTY_CYCLE_MS: f64 = 300000.0;
