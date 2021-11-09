@@ -37,8 +37,8 @@ const MINIMUM_COOLING_HEATING_SWITCH_TIME_MS: f64 = 3600000.0;
 // Minimum of 90 s before turning the compressor on again
 const MINIMUM_IDLE_TIME_COOLING_MS: f64 = 90000.0;
 
-// Wait 180 seconds before turning on the heater again
-const MINIMUM_IDLE_TIME_HEATING_MS: f64 = 180000.0;
+// Wait 10 seconds before turning on the heater again
+const MINIMUM_IDLE_TIME_HEATING_MS: f64 = 10000.0;
 
 // Minimum of 15 s of cooling before turning it off
 const MINIMUM_COOL_TIME_MS: f64 = 15000.0;
